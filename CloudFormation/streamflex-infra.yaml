@@ -76,38 +76,34 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${ProjectName}-private-az2
-
-  # 5. NAT Gateway (Une seule pour économiser l'Elastic IP du compte étudiant)
-  NatElasticIP:
+# 5. NAT Gateways (Haute Disponibilité sur 2 AZ)
+  NatElasticIP1:
     Type: AWS::EC2::EIP
     Properties:
       Domain: vpc
 
-  NatGateway:
+  NatGateway1:
     Type: AWS::EC2::NatGateway
     Properties:
-      AllocationId: !GetAtt NatElasticIP.AllocationId
+      AllocationId: !GetAtt NatElasticIP1.AllocationId
       SubnetId: !Ref PublicSubnetAZ1
       Tags:
         - Key: Name
-          Value: !Sub ${ProjectName}-nat
+          Value: !Sub ${ProjectName}-nat-az1
 
-## BETA TEST
-  # 5. NAT Gateway 2
-  NatElasticIP:
+  NatElasticIP2:
     Type: AWS::EC2::EIP
     Properties:
       Domain: vpc
 
-  NatGateway:
+  NatGateway2:
     Type: AWS::EC2::NatGateway
     Properties:
-      AllocationId: !GetAtt NatElasticIP.AllocationId
+      AllocationId: !GetAtt NatElasticIP2.AllocationId
       SubnetId: !Ref PublicSubnetAZ2
       Tags:
         - Key: Name
-          Value: !Sub ${ProjectName}-nat2
-## BETA TEST
+          Value: !Sub ${ProjectName}-nat-az2
 
   # 6. Tables de Routage
   # Route Publique (Vers Internet Gateway)
@@ -127,7 +123,6 @@ Resources:
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-  # Association des sous-réseaux publics à la table publique
   PublicSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -140,36 +135,68 @@ Resources:
       SubnetId: !Ref PublicSubnetAZ2
       RouteTableId: !Ref PublicRouteTable
 
-  # Route Privée (Vers NAT Gateway)
-  PrivateRouteTable:
+  # Route Privée AZ1 (Vers NAT 1)
+  PrivateRouteTable1:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref MainVPC
       Tags:
         - Key: Name
-          Value: !Sub ${ProjectName}-private-rt
+          Value: !Sub ${ProjectName}-private-rt-az1
 
-  PrivateRoute:
+  PrivateRoute1:
     Type: AWS::EC2::Route
     Properties:
-      RouteTableId: !Ref PrivateRouteTable
+      RouteTableId: !Ref PrivateRouteTable1
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
+      NatGatewayId: !Ref NatGateway1
 
-  # Association des sous-réseaux privés à la table privée
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PrivateSubnetAZ1
-      RouteTableId: !Ref PrivateRouteTable
+      RouteTableId: !Ref PrivateRouteTable1
+
+  # Route Privée AZ2 (Vers NAT 2)
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MainVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-private-rt-az2
+
+  PrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
 
   PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PrivateSubnetAZ2
-      RouteTableId: !Ref PrivateRouteTable
+      RouteTableId: !Ref PrivateRouteTable2
 
 Outputs:
   VpcId:
     Value: !Ref MainVPC
-    Description: L'ID du VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+  PublicSubnet1:
+    Value: !Ref PublicSubnetAZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnet1"
+  PublicSubnet2:
+    Value: !Ref PublicSubnetAZ2
+    Export:
+      Name: !Sub "${AWS::StackName}-PublicSubnet2"
+  PrivateSubnet1:
+    Value: !Ref PrivateSubnetAZ1
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet1"
+  PrivateSubnet2:
+    Value: !Ref PrivateSubnetAZ2
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnet2"
