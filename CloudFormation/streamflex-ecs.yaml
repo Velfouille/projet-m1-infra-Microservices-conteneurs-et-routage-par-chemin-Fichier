@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'StreamFlex - Couche 3 : Cluster ECS Fargate et Microservices (Pilot Light)'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: streamflex
+  NetworkStackName:
+    Type: String
+    Default: StreamFlex-Network
+  ALBStackName:
+    Type: String
+    Default: StreamFlex-ALB
+  # Paramètre clé pour le Pilot Light (Disaster Recovery)
+  NbConteneurs:
+    Type: Number
+    Default: 2
+    Description: Mettre à 2 pour la région Active, et 0 pour la région de Secours (Pilot Light)
+
+Resources:
+  # 1. Le Cluster ECS
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${ProjectName}-cluster
+      CapacityProviders:
+        - FARGATE
+
+  # 2. Définitions des Tâches (Le "moule" des conteneurs)
+  CatalogTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${ProjectName}-catalog-task
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: 256     # 0.25 vCPU comme demandé
+      Memory: 512  # 512 Mo de RAM
+      # Utilisation du rôle étudiant obligatoire (LabRole)
+      ExecutionRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      ContainerDefinitions:
+        - Name: catalog-app
+          Image: catalog:latest # ⚠️ Remplacer par l'URL de ton image (ex: docker.io/tonpseudo/catalog:latest)
+          PortMappings:
+            - ContainerPort: 8080
+              Protocol: tcp
+
+  UserTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${ProjectName}-user-task
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: 256
+      Memory: 512
+      ExecutionRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      ContainerDefinitions:
+        - Name: user-app
+          Image: user:latest # ⚠️ Remplacer par l'URL de ton image
+          PortMappings:
+            - ContainerPort: 5000
+              Protocol: tcp
+
+  # 3. Les Services ECS (Maintien en condition opérationnelle)
+  CatalogService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub ${ProjectName}-catalog-svc
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref CatalogTaskDefinition
+      DesiredCount: !Ref NbConteneurs # Géré dynamiquement pour le Pilot Light
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED # Les conteneurs sont protégés en sous-réseau privé
+          Subnets:
+            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet1"
+            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet2"
+          SecurityGroups:
+            - Fn::ImportValue: !Sub "${ALBStackName}-ECSSG"
+      LoadBalancers:
+        - ContainerName: catalog-app
+          ContainerPort: 8080
+          TargetGroupArn:
+            Fn::ImportValue: !Sub "${ALBStackName}-CatalogTG"
+
+  UserService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub ${ProjectName}-user-svc
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref UserTaskDefinition
+      DesiredCount: !Ref NbConteneurs
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet1"
+            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet2"
+          SecurityGroups:
+            - Fn::ImportValue: !Sub "${ALBStackName}-ECSSG"
+      LoadBalancers:
+        - ContainerName: user-app
+          ContainerPort: 5000
+          TargetGroupArn:
+            Fn::ImportValue: !Sub "${ALBStackName}-UserTG"
