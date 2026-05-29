@@ -5,7 +5,7 @@ echo "🚀 Début du déploiement StreamFlex sur us-east-1..."
 # 1. Déploiement du Réseau
 echo "1/3 : Création du réseau (VPC, Subnets, NAT)..."
 aws cloudformation deploy \
-  --template-file streamflex-network.yaml \
+  --template-file streamflex-infra.yaml \
   --stack-name StreamFlex-Network \
   --region us-east-1
 
