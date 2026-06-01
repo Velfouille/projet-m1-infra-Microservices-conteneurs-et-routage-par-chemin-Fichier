@@ -41,7 +41,7 @@ Resources:
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
         - Name: catalog-app
-          Image: velfouille/catalog:latest
+          Image: velfouille/streamflex-api:catalog
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
@@ -59,7 +59,7 @@ Resources:
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
         - Name: user-app
-          Image: velfouille/user:latest
+          Image: velfouille/streamflex-api:user
           PortMappings:
             - ContainerPort: 5000
               Protocol: tcp
