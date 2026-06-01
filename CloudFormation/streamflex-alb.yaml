@@ -17,7 +17,7 @@ Resources:
     Properties:
       VpcId:
         Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
-      GroupDescription: Autorise le trafic HTTP entrant depuis Internet
+      GroupDescription: Autorise le trafic HTTP entrant
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
@@ -32,7 +32,7 @@ Resources:
     Properties:
       VpcId:
         Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
-      GroupDescription: Autorise le trafic uniquement depuis l'ALB
+      GroupDescription: Autorise le trafic depuis ALB
       SecurityGroupIngress:
         # Autorise le port 8080 pour le service Catalog
         - IpProtocol: tcp
