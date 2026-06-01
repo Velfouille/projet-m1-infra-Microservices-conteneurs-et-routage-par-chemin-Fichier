@@ -1,0 +1,142 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'StreamFlex - Couche 2 : ALB, Target Groups et Security Groups'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: streamflex
+  NetworkStackName:
+    Type: String
+    Default: StreamFlex-Network
+    Description: Le nom de la stack réseau déployée précédemment
+
+Resources:
+  # 1. Security Groups (Le moindre privilège)
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      GroupDescription: Autorise le trafic HTTP entrant
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-alb-sg
+
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      GroupDescription: Autorise le trafic depuis ALB
+      SecurityGroupIngress:
+        # Autorise le port 8080 pour le service Catalog
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+        # Autorise le port 5000 pour le service User
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-ecs-sg
+
+  # 2. Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${ProjectName}-alb
+      Scheme: internet-facing
+      Subnets:
+        - Fn::ImportValue: !Sub "${NetworkStackName}-PublicSubnet1"
+        - Fn::ImportValue: !Sub "${NetworkStackName}-PublicSubnet2"
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  # 3. Target Groups (Où l'ALB doit envoyer le trafic)
+  CatalogTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${ProjectName}-tg-catalog
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip # Requis pour AWS Fargate
+      HealthCheckPath: /catalog
+
+  UserTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${ProjectName}-tg-user
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      Port: 5000
+      Protocol: HTTP
+      TargetType: ip # Requis pour AWS Fargate
+      HealthCheckPath: /user
+
+  # 4. Listener et Règles de routage par chemin
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: 404
+            ContentType: text/plain
+            MessageBody: "Erreur 404 - Microservice introuvable sur StreamFlex"
+
+  CatalogListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - "/catalog*"
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref CatalogTargetGroup
+
+  UserListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 20
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - "/user*"
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref UserTargetGroup
+
+Outputs:
+  ALBUrl:
+    Description: URL publique du Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+  ECSSecurityGroupId:
+    Description: L'ID du Security Group pour les conteneurs
+    Value: !Ref ECSSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ECSSG"
+  CatalogTargetGroupArn:
+    Value: !Ref CatalogTargetGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-CatalogTG"
+  UserTargetGroupArn:
+    Value: !Ref UserTargetGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-UserTG"
