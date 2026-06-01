@@ -1,26 +1,50 @@
 #!/bin/bash
+set -e
 
-echo "🚀 Début du déploiement StreamFlex sur us-east-1..."
+# Configuration des noms de stack
+NET_STACK="StreamFlex-Network"
+ALB_STACK="StreamFlex-ALB"
+ECS_STACK="StreamFlex-ECS"
+REGION="us-east-1"
 
-# 1. Déploiement du Réseau
-echo "1/3 : Création du réseau (VPC, Subnets, NAT)..."
+echo "🚀 Démarrage du déploiement synchronisé StreamFlex..."
+
+# 1. RÉSEAU
+echo "📦 [1/3] Déploiement du réseau (VPC, Subnets, NAT)..."
 aws cloudformation deploy \
   --template-file streamflex-infra.yaml \
-  --stack-name StreamFlex-Network \
-  --region us-east-1
+  --stack-name $NET_STACK \
+  --region $REGION \
+  --no-fail-on-empty-changeset
 
-# 2. Déploiement de la Sécurité et du Load Balancer
-echo "2/3 : Création de l'ALB et des Security Groups..."
+# 2. ALB (Sécurité & Routage)
+echo "🚦 [2/3] Déploiement de l'ALB et des Security Groups..."
 aws cloudformation deploy \
   --template-file streamflex-alb.yaml \
-  --stack-name StreamFlex-ALB \
-  --region us-east-1
+  --stack-name $ALB_STACK \
+  --region $REGION \
+  --no-fail-on-empty-changeset
 
-# 3. Déploiement du Cluster ECS
-echo "3/3 : Lancement des conteneurs Fargate..."
+# 3. ECS (Conteneurs)
+echo "🐳 [3/3] Déploiement des services Fargate..."
 aws cloudformation deploy \
   --template-file streamflex-ecs.yaml \
-  --stack-name StreamFlex-ECS \
-  --region us-east-1
+  --stack-name $ECS_STACK \
+  --region $REGION \
+  --no-fail-on-empty-changeset
 
-echo "✅ Déploiement terminé ! L'infrastructure est prête."
+echo "✅ BRAVO ! L'infrastructure est en ligne."
+echo "------------------------------------------------------"
+
+# 4. Récupération de l'URL publique
+echo "🔍 Récupération du point d'entrée réseau..."
+ALB_URL=$(aws cloudformation describe-stacks \
+  --stack-name $ALB_STACK \
+  --region $REGION \
+  --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" \
+  --output text)
+
+echo "🌍 Tes microservices sont accessibles ici :"
+echo "➡️  Catalogue : http://$ALB_URL/catalog"
+echo "➡️  Utilisateurs : http://$ALB_URL/user"
+echo "------------------------------------------------------"
