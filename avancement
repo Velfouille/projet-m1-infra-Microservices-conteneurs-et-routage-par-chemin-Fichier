@@ -1,0 +1,4 @@
+29/05 :   - Mathias & Bastien : Projections sur l'infra et les solutions utilisés. Schéma draw.io (dispo sur la branche main).
+          - Comparaison et choix technique des solutions utilisés : AWS Fargate, DynamoDB pour le /catalog et Amazon RDS pour /user
+          - Choix d'utilisation d'un ALB (Application Load Balancer)
+          - Choix de programmation : CloudFormation -> permet de mieux structurer le projet, et langage plus visible et modulaire pour notre cas
