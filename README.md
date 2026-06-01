@@ -49,3 +49,5 @@ Le déploiement se fait de manière modulaire via la CLI AWS.
 **1. Déploiement de la couche réseau (us-east-1) :**
 ```bash
 aws cloudformation deploy --template-file streamflex-infra.yaml --stack-name StreamFlex-Network --region us-east-1
+
+noé
