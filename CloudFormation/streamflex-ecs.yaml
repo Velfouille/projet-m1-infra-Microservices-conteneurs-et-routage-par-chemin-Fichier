@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche 3 : Cluster ECS Fargate et Microservices (Pilot Light)'
+Description: 'StreamFlex - Couche 3 : Cluster ECS Fargate, Microservices et Portail S3'
 
 Parameters:
   ProjectName:
@@ -41,7 +41,7 @@ Resources:
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
         - Name: catalog-app
-          Image: velfouille/streamflex-api:catalog:latest
+          Image: velfouille/streamflex-api:catalog
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
@@ -59,7 +59,7 @@ Resources:
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
         - Name: user-app
-          Image: velfouille/streamflex-api:user:latest
+          Image: velfouille/streamflex-api:user
           PortMappings:
             - ContainerPort: 5000
               Protocol: tcp
@@ -108,3 +108,34 @@ Resources:
           ContainerPort: 5000
           TargetGroupArn:
             Fn::ImportValue: !Sub "${ALBStackName}-UserTG"
+
+  # 4. Hébergement du Front-End (Portail S3)
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: s3-projet-m1-infra-cloud-mbn
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${FrontendBucket}/*"
+
+Outputs:
+  FrontendURL:
+    Description: "L'URL publique de ton site vitrine StreamFlex"
+    Value: !Sub "http://s3-projet-m1-infra-cloud-mbn.s3-website-${AWS::Region}.amazonaws.com"
