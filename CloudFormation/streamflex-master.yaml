@@ -38,3 +38,9 @@ Resources:
       Parameters:
         NbConteneurs: !Ref NbConteneurs
 ### FIN MODIFICATION ( NOÉ) ###
+
+Outputs:
+  MasterALBUrl:
+    Description: URL de l'Application Load Balancer
+    # On va chercher l'output "ALBUrl" à l'intérieur de la sous-pile "ALBStack"
+    Value: !GetAtt ALBStack.Outputs.ALBUrl

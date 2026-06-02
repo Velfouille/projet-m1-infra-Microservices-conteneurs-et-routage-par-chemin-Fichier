@@ -15,10 +15,9 @@ Conditions:
 ### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
-### DEBUT MODIFICATION ( NOÉ) ###
-  # 0. Base de données Active-Active (DynamoDB Global Tables)
+# 0. Base de données Active (Déploiement régional forcé par les restrictions de droits)
   CatalogDatabase:
-    Type: AWS::DynamoDB::GlobalTable
+    Type: AWS::DynamoDB::Table
     Condition: IsActiveRegion 
     Properties:
       TableName: !Sub "${ProjectName}-catalog-db"
@@ -29,9 +28,24 @@ Resources:
         - AttributeName: id
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
-      Replicas:
-        - Region: us-east-1
-        - Region: us-west-2
+
+### DEBUT MODIFICATION ( NOÉ) ###
+  # 0. Base de données Active-Active (DynamoDB Global Tables) // PAS UTILISABLE CAR PAS LES DROITS SUR LABROLE //
+#  CatalogDatabase:
+#    Type: AWS::DynamoDB::GlobalTable
+#    Condition: IsActiveRegion 
+#    Properties:
+#      TableName: !Sub "${ProjectName}-catalog-db"
+#      AttributeDefinitions:
+#        - AttributeName: id
+#          AttributeType: S
+#      KeySchema:
+#        - AttributeName: id
+#          KeyType: HASH
+#      BillingMode: PAY_PER_REQUEST
+#      Replicas:
+#        - Region: us-east-1
+#        - Region: us-west-2
 ### FIN MODIFICATION ( NOÉ) ###
 
   # 1. Le VPC Principal

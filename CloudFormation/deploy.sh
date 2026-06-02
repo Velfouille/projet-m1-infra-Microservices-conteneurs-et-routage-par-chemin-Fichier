@@ -51,9 +51,8 @@ aws s3 cp ../index.html s3://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}/
 aws s3 cp ../index.html s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}/
 
 # Récupération des URLs pour les DEUX régions
-ALB_URL_ACTIVE=$(aws cloudformation describe-stacks --stack-name StreamFlex-ALB --region $REGION_ACTIVE --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" --output text || echo "ALB_ACTIF_NON_TROUVE")
-ALB_URL_PASSIVE=$(aws cloudformation describe-stacks --stack-name StreamFlex-ALB --region $REGION_PASSIVE --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" --output text || echo "ALB_PASSIF_NON_TROUVE")
-
+ALB_URL_ACTIVE=$(aws cloudformation describe-stacks --stack-name $MASTER_STACK_NAME --region $REGION_ACTIVE --query "Stacks[0].Outputs[?OutputKey=='MasterALBUrl'].OutputValue" --output text || echo "ALB_ACTIF_NON_TROUVE")
+ALB_URL_PASSIVE=$(aws cloudformation describe-stacks --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE --query "Stacks[0].Outputs[?OutputKey=='MasterALBUrl'].OutputValue" --output text || echo "ALB_PASSIF_NON_TROUVE")
 echo "------------------------------------------------------"
 echo "🎉 PROJET MULTI-RÉGION TERMINÉ ! Voici tes liens :"
 echo "🌍 PORTAIL FRONT-END :"
