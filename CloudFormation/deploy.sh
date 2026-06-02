@@ -44,7 +44,13 @@ ALB_URL=$(aws cloudformation describe-stacks \
   --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" \
   --output text)
 
-echo "🌍 Tes microservices sont accessibles ici :"
-echo "➡️  Catalogue : http://$ALB_URL/catalog"
-echo "➡️  Utilisateurs : http://$ALB_URL/user"
+# 5. Déploiement du site web sur S3
+echo "🌐 Envoi du fichier index.html vers S3..."
+aws s3 cp ../index.html s3://s3-projet-m1-infra-cloud-mbn/
+
+echo "------------------------------------------------------"
+echo "🎉 PROJET TERMINÉ ! Voici tes liens :"
+echo "💻 Portail Web (Front-End) : $FRONTEND_URL"
+echo "⚙️  API Catalogue directe : http://$ALB_URL/catalog"
+echo "⚙️  API Utilisateurs directe : http://$ALB_URL/user"
 echo "------------------------------------------------------"
