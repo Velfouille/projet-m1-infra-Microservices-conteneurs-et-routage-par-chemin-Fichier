@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamFlex - Portail</title>
+    <style>
+        /* Thème sombre style plateforme de streaming */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #141414;
+            color: #ffffff;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        h1 {
+            color: #E50914; /* Rouge Netflix */
+            font-size: 3em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        p {
+            font-size: 1.2em;
+            color: #b3b3b3;
+            margin-bottom: 50px;
+        }
+
+        .button-container {
+            display: flex;
+            gap: 30px;
+        }
+
+        .btn {
+            background-color: #E50914;
+            color: white;
+            text-decoration: none;
+            padding: 15px 35px;
+            font-size: 1.2em;
+            font-weight: bold;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(229, 9, 20, 0.3);
+        }
+
+        .btn:hover {
+            background-color: #f40612;
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(229, 9, 20, 0.5);
+        }
+
+        .footer {
+            position: absolute;
+            bottom: 20px;
+            color: #666;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>StreamFlex</h1>
+    <p>Architecture Microservices propulsée par AWS Fargate</p>
+
+    <div class="button-container">
+        <a href="http://streamflex-alb-1920573686.us-east-1.elb.amazonaws.com/catalog" target="_blank" class="btn">🎬 Accéder au Catalogue</a>
+        <a href="http://streamflex-alb-1920573686.us-east-1.elb.amazonaws.com/user" target="_blank" class="btn">👤 Mon Compte</a>
+    </div>
+
+    <div class="footer">
+        Démonstration technique - Projet Infrastructure Cloud
+    </div>
+
+</body>
+</html>
