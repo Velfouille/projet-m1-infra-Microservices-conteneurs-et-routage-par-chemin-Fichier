@@ -1,54 +1,55 @@
 #!/bin/bash
 set -e
 
-# Configuration des noms de stack
-NET_STACK="StreamFlex-Network"
-ALB_STACK="StreamFlex-ALB"
-ECS_STACK="StreamFlex-ECS"
 REGION="us-east-1"
+MASTER_STACK_NAME="StreamFlex-Master"
+# Un nouveau bucket dédié et strictement privé pour ton code d'infrastructure
+TEMPLATE_BUCKET="s3-streamflex-templates-mbn" 
+FRONTEND_BUCKET="s3-projet-m1-infra-cloud-mbn"
 
-echo "🚀 Démarrage du déploiement synchronisé StreamFlex..."
+echo "🚀 Démarrage du déploiement Master StreamFlex..."
 
-# 1. RÉSEAU
-echo "📦 [1/3] Déploiement du réseau (VPC, Subnets, NAT)..."
+# 0. Création automatique du bucket de templates s'il n'existe pas
+echo "🪣  0/3 : Vérification du bucket de templates..."
+if aws s3api head-bucket --bucket "$TEMPLATE_BUCKET" 2>/dev/null; then
+    echo "Le bucket $TEMPLATE_BUCKET existe déjà."
+else
+    echo "Création du bucket privé $TEMPLATE_BUCKET..."
+    aws s3 mb s3://$TEMPLATE_BUCKET --region $REGION
+fi
+
+# 1. Envoi des sous-templates sur le bucket privé
+echo "📁 1/3 : Upload des templates YAML vers S3..."
+aws s3 cp streamflex-infra.yaml s3://$TEMPLATE_BUCKET/
+aws s3 cp streamflex-alb.yaml s3://$TEMPLATE_BUCKET/
+aws s3 cp streamflex-ecs.yaml s3://$TEMPLATE_BUCKET/
+
+# 2. Déploiement de la Master Stack
+echo "🏗️  2/3 : Déploiement de l'infrastructure globale..."
 aws cloudformation deploy \
-  --template-file streamflex-infra.yaml \
-  --stack-name $NET_STACK \
+  --template-file streamflex-master.yaml \
+  --stack-name $MASTER_STACK_NAME \
   --region $REGION \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET \
+  --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
-# 2. ALB (Sécurité & Routage)
-echo "🚦 [2/3] Déploiement de l'ALB et des Security Groups..."
-aws cloudformation deploy \
-  --template-file streamflex-alb.yaml \
-  --stack-name $ALB_STACK \
-  --region $REGION \
-  --no-fail-on-empty-changeset
-
-# 3. ECS (Conteneurs)
-echo "🐳 [3/3] Déploiement des services Fargate..."
-aws cloudformation deploy \
-  --template-file streamflex-ecs.yaml \
-  --stack-name $ECS_STACK \
-  --region $REGION \
-  --no-fail-on-empty-changeset
-
-echo "✅ BRAVO ! L'infrastructure est en ligne."
-echo "------------------------------------------------------"
-
-# 4. Récupération des points d'entrée
-echo "🔍 Récupération des points d'entrée..."
-
+# 3. Récupération de l'URL de l'ALB
+echo "🔍 Récupération du point d'entrée ALB..."
+# L'ALB est dynamique, on interroge AWS pour trouver l'URL générée
+# Note : on utilise --query sur les Exports globaux si la stack enfant change de nom
 ALB_URL=$(aws cloudformation describe-stacks \
-  --stack-name $ALB_STACK \
+  --stack-name StreamFlex-ALB \
   --region $REGION \
   --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" \
-  --output text)
+  --output text || echo "ALB_NON_TROUVE")
 
-FRONTEND_URL="http://s3-projet-m1-infra-cloud-mbn.s3-website-us-east-1.amazonaws.com"
+# Le S3 est statique (car tu as imposé le nom du bucket), on le déclare en dur !
+FRONTEND_URL="http://${FRONTEND_BUCKET}.s3-website-${REGION}.amazonaws.com"
 
-echo "🌐 Envoi du fichier index.html vers S3..."
-aws s3 cp ../index.html s3://s3-projet-m1-infra-cloud-mbn/
+# 4. Déploiement du site web sur S3
+echo "🌐 3/3 : Envoi du fichier index.html vers S3..."
+aws s3 cp ../index.html s3://$FRONTEND_BUCKET/
 
 echo "------------------------------------------------------"
 echo "🎉 PROJET TERMINÉ ! Voici tes liens :"
