@@ -2,3 +2,14 @@
           - Mathias & Bastien : Comparaison et choix technique des solutions utilisés : AWS Fargate, DynamoDB pour le /catalog et Amazon RDS pour /user
           - Mathias & Bastien : Choix d'utilisation d'un ALB (Application Load Balancer)
           - Mathias & Bastien : Choix de programmation : CloudFormation -> permet de mieux structurer le projet, et langage plus visible et modulaire pour notre cas
+
+01/06 :
+          - Bastien, Mathias & Noe : creation du streamflex-infra.yaml
+          - Bastien, Mathias & Noe : creation du streamflex-alb.yaml
+          - Bastien, Mathias & Noe : creation du streamflex-ecs.yaml
+          - Bastien, Mathias & Noe : creation du deploy.sh
+          - Bastien, Mathias & Noe : creation du destoy.sh
+02/06 :
+          - Bastien, Mathias & Noe : Mise a jour du schemat
+          - Bastien, Mathias & Noe : Creation du frontend
+          - Bastien, Mathias & Noe : update streamflex-ecs.yaml
