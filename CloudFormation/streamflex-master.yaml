@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Master Stack (Réseau, ALB, ECS)'
+Description: 'StreamFlex - Master Stack (Reseau, ALB, ECS)'
 
 Parameters:
   TemplateBucket:

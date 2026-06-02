@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche Réseau (VPC, Subnets, IGW, NAT) et DB'
+Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB'
 
 Parameters:
   ProjectName:
@@ -30,7 +30,7 @@ Resources:
       BillingMode: PAY_PER_REQUEST
 
 ### DEBUT MODIFICATION ( NOÉ) ###
-  # 0. Base de données Active-Active (DynamoDB Global Tables) // PAS UTILISABLE CAR PAS LES DROITS SUR LABROLE //
+# 0. Base de données Active-Active (DynamoDB Global Tables) // PAS UTILISABLE CAR PAS LES DROITS SUR LABROLE //
 #  CatalogDatabase:
 #    Type: AWS::DynamoDB::GlobalTable
 #    Condition: IsActiveRegion 
