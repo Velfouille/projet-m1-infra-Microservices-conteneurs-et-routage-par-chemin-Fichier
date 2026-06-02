@@ -36,15 +36,17 @@ aws cloudformation deploy \
 echo "✅ BRAVO ! L'infrastructure est en ligne."
 echo "------------------------------------------------------"
 
-# 4. Récupération de l'URL publique
-echo "🔍 Récupération du point d'entrée réseau..."
+# 4. Récupération des points d'entrée
+echo "🔍 Récupération des points d'entrée..."
+
 ALB_URL=$(aws cloudformation describe-stacks \
   --stack-name $ALB_STACK \
   --region $REGION \
   --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" \
   --output text)
 
-# 5. Déploiement du site web sur S3
+FRONTEND_URL="http://s3-projet-m1-infra-cloud-mbn.s3-website-us-east-1.amazonaws.com"
+
 echo "🌐 Envoi du fichier index.html vers S3..."
 aws s3 cp ../index.html s3://s3-projet-m1-infra-cloud-mbn/
 

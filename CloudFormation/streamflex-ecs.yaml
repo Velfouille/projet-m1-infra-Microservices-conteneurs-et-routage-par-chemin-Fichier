@@ -138,5 +138,4 @@ Resources:
 Outputs:
   FrontendURL:
     Description: "L'URL publique de ton site vitrine StreamFlex"
-    # L'URL S3 standard utilise le format : http://[nom-du-bucket].s3-website-[region].amazonaws.com
     Value: !Sub "http://s3-projet-m1-infra-cloud-mbn.s3-website-${AWS::Region}.amazonaws.com"
