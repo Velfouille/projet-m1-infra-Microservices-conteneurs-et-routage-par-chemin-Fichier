@@ -2,10 +2,16 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: 'StreamFlex - Master Stack (Réseau, ALB, ECS)'
 
 Parameters:
-  # Tu dois indiquer ici le nom du bucket S3 où tu vas stocker tes templates YAML
   TemplateBucket:
     Type: String
     Description: Nom du bucket S3 contenant les templates enfants
+### DEBUT MODIFICATION ( NOÉ) ###
+  # Ajout du paramètre pour gérer le nombre de conteneurs (Active/Passive)
+  NbConteneurs:
+    Type: Number
+    Default: 2
+    Description: Mettre à 2 pour la région Active, et 0 pour la région de Secours (Pilot Light)
+### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
   # 1. Couche Réseau
@@ -27,3 +33,8 @@ Resources:
     DependsOn: ALBStack
     Properties:
       TemplateURL: !Sub "https://${TemplateBucket}.s3.amazonaws.com/streamflex-ecs.yaml"
+### DEBUT MODIFICATION ( NOÉ) ###
+      # On passe la variable jusqu'au template ECS
+      Parameters:
+        NbConteneurs: !Ref NbConteneurs
+### FIN MODIFICATION ( NOÉ) ###

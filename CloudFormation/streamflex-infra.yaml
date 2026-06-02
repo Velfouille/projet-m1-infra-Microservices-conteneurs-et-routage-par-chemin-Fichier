@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche Réseau (VPC, Subnets, IGW, NAT)'
+Description: 'StreamFlex - Couche Réseau (VPC, Subnets, IGW, NAT) et DB'
 
 Parameters:
   ProjectName:
@@ -7,7 +7,33 @@ Parameters:
     Default: streamflex
     Description: Nom du projet utilisé pour tagger les ressources
 
+### DEBUT MODIFICATION ( NOÉ) ###
+# Condition pour s'assurer que la base de données ne soit créée qu'une seule fois 
+# (depuis la région Active) pour éviter les erreurs CloudFormation.
+Conditions:
+  IsActiveRegion: !Equals [ !Ref "AWS::Region", "us-east-1" ]
+### FIN MODIFICATION ( NOÉ) ###
+
 Resources:
+### DEBUT MODIFICATION ( NOÉ) ###
+  # 0. Base de données Active-Active (DynamoDB Global Tables)
+  CatalogDatabase:
+    Type: AWS::DynamoDB::GlobalTable
+    Condition: IsActiveRegion 
+    Properties:
+      TableName: !Sub "${ProjectName}-catalog-db"
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      Replicas:
+        - Region: us-east-1
+        - Region: us-west-2
+### FIN MODIFICATION ( NOÉ) ###
+
   # 1. Le VPC Principal
   MainVPC:
     Type: AWS::EC2::VPC
@@ -39,7 +65,7 @@ Resources:
     Properties:
       VpcId: !Ref MainVPC
       CidrBlock: 10.0.0.0/24
-      AvailabilityZone: !Select [0, !GetAZs ''] # Sélectionne la 1ère AZ de la région
+      AvailabilityZone: !Select [0, !GetAZs ''] 
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -50,7 +76,7 @@ Resources:
     Properties:
       VpcId: !Ref MainVPC
       CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [1, !GetAZs ''] # Sélectionne la 2ème AZ
+      AvailabilityZone: !Select [1, !GetAZs ''] 
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -76,7 +102,8 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${ProjectName}-private-az2
-# 5. NAT Gateways (Haute Disponibilité sur 2 AZ)
+
+  # 5. NAT Gateways (Haute Disponibilité sur 2 AZ)
   NatElasticIP1:
     Type: AWS::EC2::EIP
     Properties:
@@ -106,7 +133,6 @@ Resources:
           Value: !Sub ${ProjectName}-nat-az2
 
   # 6. Tables de Routage
-  # Route Publique (Vers Internet Gateway)
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -135,7 +161,6 @@ Resources:
       SubnetId: !Ref PublicSubnetAZ2
       RouteTableId: !Ref PublicRouteTable
 
-  # Route Privée AZ1 (Vers NAT 1)
   PrivateRouteTable1:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -157,7 +182,6 @@ Resources:
       SubnetId: !Ref PrivateSubnetAZ1
       RouteTableId: !Ref PrivateRouteTable1
 
-  # Route Privée AZ2 (Vers NAT 2)
   PrivateRouteTable2:
     Type: AWS::EC2::RouteTable
     Properties:

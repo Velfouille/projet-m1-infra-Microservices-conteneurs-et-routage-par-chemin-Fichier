@@ -1,59 +1,66 @@
 #!/bin/bash
 set -e
 
-REGION="us-east-1"
+### DEBUT MODIFICATION ( NOÉ) ###
+# Ajout des variables pour piloter les deux régions
+REGION_ACTIVE="us-east-1"
+REGION_PASSIVE="us-west-2"
 MASTER_STACK_NAME="StreamFlex-Master"
-# Un nouveau bucket dédié et strictement privé pour ton code d'infrastructure
 TEMPLATE_BUCKET="s3-streamflex-templates-mbn" 
-FRONTEND_BUCKET="s3-projet-m1-infra-cloud-mbn"
+# On garde juste le préfixe du bucket front-end (la région sera ajoutée dynamiquement)
+FRONTEND_BUCKET_BASE="s3-projet-m1-infra-cloud-mbn"
+### FIN MODIFICATION ( NOÉ) ###
 
-echo "🚀 Démarrage du déploiement Master StreamFlex..."
+echo "🚀 Démarrage du déploiement Multi-Région StreamFlex..."
 
-# 0. Création automatique du bucket de templates s'il n'existe pas
-echo "🪣  0/3 : Vérification du bucket de templates..."
+echo "🪣  0/4 : Création du bucket de templates global..."
 if aws s3api head-bucket --bucket "$TEMPLATE_BUCKET" 2>/dev/null; then
     echo "Le bucket $TEMPLATE_BUCKET existe déjà."
 else
-    echo "Création du bucket privé $TEMPLATE_BUCKET..."
-    aws s3 mb s3://$TEMPLATE_BUCKET --region $REGION
+    aws s3 mb s3://$TEMPLATE_BUCKET --region $REGION_ACTIVE
 fi
 
-# 1. Envoi des sous-templates sur le bucket privé
-echo "📁 1/3 : Upload des templates YAML vers S3..."
+echo "📁 1/4 : Upload des templates YAML vers S3..."
 aws s3 cp streamflex-infra.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-alb.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-ecs.yaml s3://$TEMPLATE_BUCKET/
+aws s3 cp streamflex-master.yaml s3://$TEMPLATE_BUCKET/
 
-# 2. Déploiement de la Master Stack
-echo "🏗️  2/3 : Déploiement de l'infrastructure globale..."
+### DEBUT MODIFICATION ( NOÉ) ###
+# Déploiement en 2 temps (Actif  2 conteneurs, Passif  0 conteneur)
+echo "🏗️  2/4 : Déploiement de la région ACTIVE ($REGION_ACTIVE)..."
 aws cloudformation deploy \
   --template-file streamflex-master.yaml \
   --stack-name $MASTER_STACK_NAME \
-  --region $REGION \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET \
+  --region $REGION_ACTIVE \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
-# 3. Récupération de l'URL de l'ALB
-echo "🔍 Récupération du point d'entrée ALB..."
-# L'ALB est dynamique, on interroge AWS pour trouver l'URL générée
-# Note : on utilise --query sur les Exports globaux si la stack enfant change de nom
-ALB_URL=$(aws cloudformation describe-stacks \
-  --stack-name StreamFlex-ALB \
-  --region $REGION \
-  --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" \
-  --output text || echo "ALB_NON_TROUVE")
+echo "🏗️  3/4 : Déploiement de la région PASSIVE ($REGION_PASSIVE - Pilot Light)..."
+aws cloudformation deploy \
+  --template-file streamflex-master.yaml \
+  --stack-name $MASTER_STACK_NAME \
+  --region $REGION_PASSIVE \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 \
+  --capabilities CAPABILITY_IAM \
+  --no-fail-on-empty-changeset
 
-# Le S3 est statique (car tu as imposé le nom du bucket), on le déclare en dur !
-FRONTEND_URL="http://${FRONTEND_BUCKET}.s3-website-${REGION}.amazonaws.com"
+echo "🌐 4/4 : Envoi du fichier index.html vers S3 sur les deux régions..."
+aws s3 cp ../index.html s3://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}/
+aws s3 cp ../index.html s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}/
 
-# 4. Déploiement du site web sur S3
-echo "🌐 3/3 : Envoi du fichier index.html vers S3..."
-aws s3 cp ../index.html s3://$FRONTEND_BUCKET/
+# Récupération des URLs pour les DEUX régions
+ALB_URL_ACTIVE=$(aws cloudformation describe-stacks --stack-name StreamFlex-ALB --region $REGION_ACTIVE --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" --output text || echo "ALB_ACTIF_NON_TROUVE")
+ALB_URL_PASSIVE=$(aws cloudformation describe-stacks --stack-name StreamFlex-ALB --region $REGION_PASSIVE --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" --output text || echo "ALB_PASSIF_NON_TROUVE")
 
 echo "------------------------------------------------------"
-echo "🎉 PROJET TERMINÉ ! Voici tes liens :"
-echo "💻 Portail Web (Front-End) : $FRONTEND_URL"
-echo "⚙️  API Catalogue directe : http://$ALB_URL/catalog"
-echo "⚙️  API Utilisateurs directe : http://$ALB_URL/user"
+echo "🎉 PROJET MULTI-RÉGION TERMINÉ ! Voici tes liens :"
+echo "🌍 PORTAIL FRONT-END :"
+echo " - Principal : http://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}.s3-website-${REGION_ACTIVE}.amazonaws.com"
+echo " - Secours   : http://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}.s3-website-${REGION_PASSIVE}.amazonaws.com"
+echo "⚙️  ALB (APIs) :"
+echo " - Active  : http://$ALB_URL_ACTIVE"
+echo " - Passive : http://$ALB_URL_PASSIVE (Attention, 0 conteneur démarré !)"
 echo "------------------------------------------------------"
+### FIN MODIFICATION ( NOÉ) ###

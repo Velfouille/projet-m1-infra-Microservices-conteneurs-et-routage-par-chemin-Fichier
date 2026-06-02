@@ -1,30 +1,37 @@
 #!/bin/bash
 set -e
 
-REGION="us-east-1"
+### DEBUT MODIFICATION (AVEC NOÉ) ###
+REGION_ACTIVE="us-east-1"
+REGION_PASSIVE="us-west-2"
 MASTER_STACK_NAME="StreamFlex-Master"
 TEMPLATE_BUCKET="s3-streamflex-templates-mbn" 
-FRONTEND_BUCKET="s3-projet-m1-infra-cloud-mbn"
+FRONTEND_BUCKET_BASE="s3-projet-m1-infra-cloud-mbn"
+### FIN MODIFICATION (AVEC NOÉ) ###
 
-echo "🧹 Début de la destruction de l'infrastructure globale StreamFlex..."
+echo "🧹 Début de la destruction de l'infrastructure globale Multi-Région..."
 
-# ÉTAPE 0 : Vider les deux buckets S3 (Front-end et Templates)
+### DEBUT MODIFICATION (AVEC NOÉ) ###
 echo "🗑️  0/2 : Vidage des buckets S3 pour autoriser la suppression..."
-aws s3 rm s3://$FRONTEND_BUCKET --recursive || true
+# Vidage des deux buckets Front (Actif et Passif)
+aws s3 rm s3://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE} --recursive || true
+aws s3 rm s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE} --recursive || true
 aws s3 rm s3://$TEMPLATE_BUCKET --recursive || true
 
-# ÉTAPE 1 : Suppression de la Master Stack (qui détruit automatiquement les 3 autres)
-echo "🔥 1/2 : Suppression de la Master Stack (ECS, ALB, Réseau)..."
-aws cloudformation delete-stack --stack-name $MASTER_STACK_NAME --region $REGION
+echo "🔥 1/2 : Suppression des Master Stacks (ECS, ALB, Réseau) en parallèle..."
+# Le petit '&' à la fin permet de lancer la suppression des deux régions en même temps
+aws cloudformation delete-stack --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE &
+aws cloudformation delete-stack --stack-name $MASTER_STACK_NAME --region $REGION_ACTIVE &
 
-# On dit au terminal de patienter jusqu'à la fin de la destruction
-aws cloudformation wait stack-delete-complete --stack-name $MASTER_STACK_NAME --region $REGION
+echo "⏳ Attente de la destruction (cela peut prendre environ 5 à 10 minutes)..."
+aws cloudformation wait stack-delete-complete --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE
+aws cloudformation wait stack-delete-complete --stack-name $MASTER_STACK_NAME --region $REGION_ACTIVE
+### FIN MODIFICATION (AVEC NOÉ) ###
 
-# ÉTAPE 2 : Suppression du bucket de templates (créé manuellement au déploiement)
 echo "📦 2/2 : Suppression du bucket technique S3..."
 aws s3 rb s3://$TEMPLATE_BUCKET --force || true
 
 echo "------------------------------------------------------"
-echo "✅ Destruction terminée avec succès !"
+echo "✅ Destruction multi-région terminée avec succès !"
 echo "Plus aucune ressource n'est active, ta facturation est à zéro."
 echo "------------------------------------------------------"
