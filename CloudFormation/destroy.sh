@@ -14,7 +14,7 @@ echo "2/3 : Suppression du Load Balancer..."
 aws cloudformation delete-stack --stack-name StreamFlex-ALB --region us-east-1
 aws cloudformation wait stack-delete-complete --stack-name StreamFlex-ALB --region us-east-1
 
-echo "3/3 : Suppression du Réseau (Cela peut prendre quelques minutes)..."
+echo "3/3 : Suppression du Réseau..."
 aws cloudformation delete-stack --stack-name StreamFlex-Network --region us-east-1
 aws cloudformation wait stack-delete-complete --stack-name StreamFlex-Network --region us-east-1
 
