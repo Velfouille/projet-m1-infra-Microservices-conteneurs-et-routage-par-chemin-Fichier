@@ -1,6 +1,12 @@
 const express = require('express');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, scan, put, get, delete: deleteItem } = require('@aws-sdk/lib-dynamodb');
+const {
+  DynamoDBDocumentClient,
+  ScanCommand,
+  PutCommand,
+  GetCommand,
+  DeleteCommand
+} = require('@aws-sdk/lib-dynamodb');
 const app = express();
 const PORT = process.env.PORT || 5000;
 const TABLE_NAME = process.env.DYNAMODB_TABLE || 'streamflex-user-db';
@@ -19,14 +25,15 @@ app.get('/health', (_req, res) => {
 // GET /user - Liste tous les utilisateurs
 app.get('/user', async (_req, res) => {
   try {
-    const command = scan({ TableName: TABLE_NAME });
+    const command = new ScanCommand({ TableName: TABLE_NAME });
     const result = await dynamoDb.send(command);
+    const profiles = result.Items || [];
     
     res.status(200).json({
       service: 'user',
       message: 'StreamFlex user API from DynamoDB',
-      count: result.Items.length,
-      profiles: result.Items || []
+      count: profiles.length,
+      profiles
     });
   } catch (error) {
     console.error('Error fetching users:', error);
@@ -38,7 +45,7 @@ app.get('/user', async (_req, res) => {
 app.get('/user/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const command = get({ TableName: TABLE_NAME, Key: { userId: id } });
+    const command = new GetCommand({ TableName: TABLE_NAME, Key: { userId: id } });
     const result = await dynamoDb.send(command);
     
     if (!result.Item) {
@@ -68,7 +75,7 @@ app.post('/user', async (req, res) => {
       createdAt: new Date().toISOString()
     };
     
-    const command = put({ TableName: TABLE_NAME, Item: user });
+    const command = new PutCommand({ TableName: TABLE_NAME, Item: user });
     await dynamoDb.send(command);
     
     res.status(201).json({ message: 'User created', user });
@@ -82,7 +89,7 @@ app.post('/user', async (req, res) => {
 app.delete('/user/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const command = deleteItem({ TableName: TABLE_NAME, Key: { userId: id } });
+    const command = new DeleteCommand({ TableName: TABLE_NAME, Key: { userId: id } });
     await dynamoDb.send(command);
     
     res.status(200).json({ message: 'User deleted', userId: id });

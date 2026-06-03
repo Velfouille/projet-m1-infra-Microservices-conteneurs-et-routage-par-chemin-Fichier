@@ -1,6 +1,12 @@
 const express = require('express');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, scan, put, get, delete: deleteItem } = require('@aws-sdk/lib-dynamodb');
+const {
+  DynamoDBDocumentClient,
+  ScanCommand,
+  PutCommand,
+  GetCommand,
+  DeleteCommand
+} = require('@aws-sdk/lib-dynamodb');
 const app = express();
 const PORT = process.env.PORT || 8080;
 const TABLE_NAME = process.env.DYNAMODB_TABLE || 'streamflex-catalog-db';
@@ -19,14 +25,15 @@ app.get('/health', (_req, res) => {
 // GET /catalog - Liste tous les vidéos
 app.get('/catalog', async (_req, res) => {
   try {
-    const command = scan({ TableName: TABLE_NAME });
+    const command = new ScanCommand({ TableName: TABLE_NAME });
     const result = await dynamoDb.send(command);
+    const videos = result.Items || [];
     
     res.status(200).json({
       service: 'catalog',
       message: 'StreamFlex catalog API from DynamoDB',
-      count: result.Items.length,
-      videos: result.Items || []
+      count: videos.length,
+      videos
     });
   } catch (error) {
     console.error('Error fetching catalog:', error);
@@ -38,7 +45,7 @@ app.get('/catalog', async (_req, res) => {
 app.get('/catalog/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const command = get({ TableName: TABLE_NAME, Key: { id } });
+    const command = new GetCommand({ TableName: TABLE_NAME, Key: { id } });
     const result = await dynamoDb.send(command);
     
     if (!result.Item) {
@@ -68,7 +75,7 @@ app.post('/catalog', async (req, res) => {
       createdAt: new Date().toISOString()
     };
     
-    const command = put({ TableName: TABLE_NAME, Item: video });
+    const command = new PutCommand({ TableName: TABLE_NAME, Item: video });
     await dynamoDb.send(command);
     
     res.status(201).json({ message: 'Video created', video });
@@ -82,7 +89,7 @@ app.post('/catalog', async (req, res) => {
 app.delete('/catalog/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const command = deleteItem({ TableName: TABLE_NAME, Key: { id } });
+    const command = new DeleteCommand({ TableName: TABLE_NAME, Key: { id } });
     await dynamoDb.send(command);
     
     res.status(200).json({ message: 'Video deleted', id });
