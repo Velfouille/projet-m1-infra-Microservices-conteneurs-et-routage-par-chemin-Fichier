@@ -32,8 +32,9 @@ aws cloudformation delete-stack --stack-name $MASTER_STACK_NAME --region $REGION
 aws cloudformation delete-stack --stack-name $MASTER_STACK_NAME --region $REGION_ACTIVE &
 
 echo "⏳ Attente de la destruction (cela peut prendre 10 à 15 minutes, surtout à cause de la base RDS)..."
-aws cloudformation wait stack-delete-complete --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE
-aws cloudformation wait stack-delete-complete --stack-name $MASTER_STACK_NAME --region $REGION_ACTIVE
+# Note: Waiter may fail due to lab IAM restrictions, but stack deletion is still in progress
+aws cloudformation wait stack-delete-complete --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE || echo "⚠️  Waiter timeout (stacks deleting in background)"
+aws cloudformation wait stack-delete-complete --stack-name $MASTER_STACK_NAME --region $REGION_ACTIVE || echo "⚠️  Waiter timeout (stacks deleting in background)"
 
 echo "📦 2/2 : Suppression du bucket technique S3..."
 aws s3 rb s3://$TEMPLATE_BUCKET --force || true

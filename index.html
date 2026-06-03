@@ -16,6 +16,7 @@
             align-items: center;
             justify-content: center;
             height: 100vh;
+            transition: border-top 0.3s ease;
         }
 
         h1 {
@@ -47,6 +48,8 @@
             border-radius: 4px;
             transition: all 0.3s ease;
             box-shadow: 0 4px 15px rgba(229, 9, 20, 0.3);
+            border: none;
+            cursor: pointer;
         }
 
         .btn:hover {
@@ -72,12 +75,46 @@
             font-weight: bold;
         }
 
-
         #failover-status {
             margin-top: 20px;
             color: orange;
             font-weight: bold;
             display: none;
+            padding: 10px 15px;
+            background-color: rgba(255, 165, 0, 0.1);
+            border-radius: 4px;
+        }
+
+        #recovery-status {
+            margin-top: 20px;
+            color: #4CAF50;
+            font-weight: bold;
+            display: none;
+            padding: 10px 15px;
+            background-color: rgba(76, 175, 80, 0.1);
+            border-radius: 4px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 5px;
+            animation: pulse 1s infinite;
+        }
+
+        .status-healthy {
+            background-color: #4CAF50;
+        }
+
+        .status-warning {
+            background-color: orange;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
 
     </style>
@@ -86,63 +123,169 @@
 
     <h1>StreamFlex</h1>
     <p>Architecture Microservices propulsée par AWS Fargate<br>
-       <span style="font-size: 0.8em; color: #888;">(Déployé via CloudFormation)</span>
+       <span style="font-size: 0.8em; color: #888;">(Déployé via CloudFormation - Multi-Région)</span>
     </p>
 
     <div class="button-container">
-        <a href="http://{{ALB_URL}}/catalog" target="_blank" class="btn">🎬 Accéder au Catalogue</a>
-        <a href="http://{{ALB_URL}}/user" target="_blank" class="btn">👤 Mon Compte</a>
-
-### DEBUT MODIFICATION ( NOÉ) ###
-        <a href="#" id="link-catalog" target="_blank" class="btn">🎬 Accéder au Catalogue</a>
-        <a href="#" id="link-user" target="_blank" class="btn">👤 Mon Compte</a>
-### FIN MODIFICATION ( NOÉ) ###
+        <a href="http://{{ALB_URL}}/catalog" target="_blank" class="btn">🎬 Catalogue</a>
+        <a href="http://{{ALB_URL}}/user" target="_blank" class="btn">👤 Utilisateurs</a>
     </div>
 
-### DEBUT MODIFICATION ( NOÉ) ###
-    <div id="failover-status">⚠️ Basculement activé : Vous êtes sur la région de secours !</div>
+    <div id="failover-status">
+        <span class="status-indicator status-warning"></span>
+        ⚠️ Basculement activé : Vous êtes sur la région de secours (us-west-2)
+    </div>
 
-    <script>
-        // /!\ IMPORTANT : À l'issue du ./deploy.sh, récupère les 2 URL des ALB dans 
-        // la console bash et colle-les dans les deux variables ci-dessous : /!\
-        const API_ACTIVE = "http://METTRE_ALB_US_EAST_1_ICI.elb.amazonaws.com";
-        const API_PASSIVE = "http://METTRE_ALB_US_WEST_2_ICI.elb.amazonaws.com";
-
-        const linkCatalog = document.getElementById('link-catalog');
-        const linkUser = document.getElementById('link-user');
-        const failoverStatus = document.getElementById('failover-status');
-
-        // Par défaut, on route vers la région principale
-        linkCatalog.href = API_ACTIVE + "/catalog";
-        linkUser.href = API_ACTIVE + "/user";
-
-        // Test "Client-Side Load Balancing" : On vérifie si l'API Active est en vie
-        fetch(API_ACTIVE + "/catalog", { 
-            method: 'GET', 
-            signal: AbortSignal.timeout(3000) // Timeout de 3 secondes pour ne pas bloquer l'utilisateur
-        })
-        .then(response => {
-            if (!response.ok) throw new Error("Erreur Serveur Primaire");
-            console.log("✅ API Active en ligne");
-        })
-        .catch(error => {
-            console.warn("⚠️ API Active indisponible, basculement vers la région Passive !");
-            
-            // Si c'est mort, on bascule les liens vers le secours
-            linkCatalog.href = API_PASSIVE + "/catalog";
-            linkUser.href = API_PASSIVE + "/user";
-            
-            // Affichage visuel
-            failoverStatus.style.display = "block";
-            document.body.style.borderTop = "5px solid orange";
-        });
-    </script>
-### FIN MODIFICATION ( NOÉ) ###
+    <div id="recovery-status">
+        <span class="status-indicator status-healthy"></span>
+        ✅ Région principale restaurée ! Redirection automatique...
+    </div>
 
     <div class="footer">
         Démonstration technique - Projet Infrastructure Cloud <br>
-        Vous êtes actuellement sur la région : <span class="badge">{{REGION_NAME}}</span>
+        Région actuelle : <span class="badge">{{REGION_NAME}}</span>
     </div>
+
+    <script>
+        // URLs des deux régions
+        const API_ACTIVE = "http://{{ALB_URL}}";      // us-east-1 (injecté par deploy.sh)
+        const API_PASSIVE = "http://{{ALB_URL_PASSIVE}}";  // us-west-2 (injecté par deploy.sh)
+
+        const failoverStatus = document.getElementById('failover-status');
+        const recoveryStatus = document.getElementById('recovery-status');
+        const buttons = document.querySelectorAll('.btn');
+
+        let isFailedOver = false;
+        let pollingInterval = null;
+
+        /**
+         * Teste la disponibilité d'une API
+         */
+        async function testAPI(url) {
+            try {
+                const response = await fetch(url + "/health", {
+                    signal: AbortSignal.timeout(3000)
+                });
+                return response.ok;
+            } catch (error) {
+                return false;
+            }
+        }
+
+        /**
+         * Bascule vers la région passive
+         */
+        async function failoverToPassive() {
+            console.warn("🔄 Basculement vers région passive...");
+            isFailedOver = true;
+            failoverStatus.style.display = 'block';
+            document.body.style.borderTop = '5px solid orange';
+            
+            // Rediriger les boutons vers la région passive
+            buttons.forEach(btn => {
+                const href = btn.getAttribute('href');
+                if (href.includes('/catalog')) {
+                    btn.href = API_PASSIVE + "/catalog";
+                } else if (href.includes('/user')) {
+                    btn.href = API_PASSIVE + "/user";
+                }
+            });
+
+            // Démarrer le polling pour détecter la récupération
+            startRecoveryPolling();
+        }
+
+        /**
+         * Rebasculer vers la région active
+         */
+        async function recoverToActive() {
+            console.log("✅ Région active restaurée ! Rebasculement...");
+            isFailedOver = false;
+            failoverStatus.style.display = 'none';
+            recoveryStatus.style.display = 'block';
+            document.body.style.borderTop = 'none';
+
+            // Rediriger les boutons vers la région active
+            buttons.forEach(btn => {
+                const href = btn.getAttribute('href');
+                if (href.includes('/catalog')) {
+                    btn.href = API_ACTIVE + "/catalog";
+                } else if (href.includes('/user')) {
+                    btn.href = API_ACTIVE + "/user";
+                }
+            });
+
+            // Masquer le message après 5 secondes
+            setTimeout(() => {
+                recoveryStatus.style.display = 'none';
+            }, 5000);
+
+            // Arrêter le polling
+            stopRecoveryPolling();
+        }
+
+        /**
+         * Démarre le polling pour détecter la récupération (tous les 30s)
+         */
+        function startRecoveryPolling() {
+            if (pollingInterval) return; // Éviter les doublons
+
+            console.log("🔍 Polling de la région active chaque 30 secondes...");
+            pollingInterval = setInterval(async () => {
+                const isAlive = await testAPI(API_ACTIVE);
+                if (isAlive) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                    await recoverToActive();
+                } else {
+                    console.log("⏳ Région active toujours indisponible...");
+                }
+            }, 30000); // 30 secondes
+        }
+
+        /**
+         * Arrête le polling
+         */
+        function stopRecoveryPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+        }
+
+        /**
+         * Test initial : vérifier si l'API active est disponible
+         */
+        async function initialHealthCheck() {
+            console.log("🏥 Vérification de santé initiale...");
+            const isActive = await testAPI(API_ACTIVE);
+
+            if (!isActive) {
+                console.warn("⚠️ Région active indisponible au chargement");
+                const isPassive = await testAPI(API_PASSIVE);
+
+                if (isPassive) {
+                    await failoverToPassive();
+                } else {
+                    console.warn("⚠️ Région passive indisponible aussi, conservation des liens actifs");
+                }
+            } else {
+                console.log("✅ Région active opérationnelle");
+                // Garder les URLs par défaut (region 1)
+            }
+        }
+
+        // Lancer le test au chargement de la page
+        initialHealthCheck();
+
+        // Optionnel : relancer un test toutes les 2 minutes si on est déjà basculé
+        setInterval(async () => {
+            if (isFailedOver) {
+                // Déjà couvert par startRecoveryPolling qui utilise 30s
+            }
+        }, 120000);
+
+    </script>
 
 </body>
 </html>

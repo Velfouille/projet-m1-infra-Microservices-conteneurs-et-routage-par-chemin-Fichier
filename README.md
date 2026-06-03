@@ -49,3 +49,25 @@ Le déploiement se fait de manière modulaire via la CLI AWS.
 **1. Déploiement de la couche réseau (us-east-1) :**
 ```bash
 aws cloudformation deploy --template-file streamflex-infra.yaml --stack-name StreamFlex-Network --region us-east-1
+<<<<<<< HEAD
+=======
+```
+
+**Pourquoi pas une table global pour dynamodb ?**
+
+problèmes de droits sur le LabRole
+
+**Pourquoi le basculement n'est pas auto-bidirectionnel ?**
+
+Pour vraiment auto-re-basculer, il faudrait :
+
+Route53 Health Check → ❌ LabRole ne l'autorise pas
+
+DNS failover → ❌ Impossible en lab
+
+Polling continu → ⚠️ Possible mais cher en requêtes
+
+**Pourquoi pas RDS ?**
+
+problèmes de droits sur le LabRole
+>>>>>>> dev
