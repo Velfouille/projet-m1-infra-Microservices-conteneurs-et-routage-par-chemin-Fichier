@@ -1,142 +1,346 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche 2 : ALB, Target Groups et Security Groups'
+Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (Sync Continue DynamoDB Streams & RDS)'
 
 Parameters:
   ProjectName:
     Type: String
     Default: streamflex
-  NetworkStackName:
-    Type: String
-    Default: StreamFlex-Network
-    Description: Le nom de la stack réseau déployée précédemment
+    Description: Nom du projet utilisé pour tagger les ressources
+
+### DEBUT MODIFICATION ( NOÉ) ###
+# Condition pour s'assurer de déployer les bonnes ressources dans les bonnes régions
+Conditions:
+  IsActiveRegion: !Equals [ !Ref "AWS::Region", "us-east-1" ]
+  IsPassiveRegion: !Equals [ !Ref "AWS::Region", "us-west-2" ]
+### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
-  # 1. Security Groups (Le moindre privilège)
-  ALBSecurityGroup:
+### DEBUT MODIFICATION ( NOÉ) ###
+  # =========================================================
+  # COUCHE BASE DE DONNÉES NOSQL (DYNAMODB - CATALOGUE)
+  # =========================================================
+  
+  # 0.1 Base de données DynamoDB (Créée dans les deux régions pour avoir une source et une destination)
+  CatalogDatabase:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-catalog-db"
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      # Activation de DynamoDB Streams pour capturer chaque modification en temps réel
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # 0.2 Fonction Lambda de Synchronisation Continue (Déployée uniquement dans la région Active)
+  SyncCatalogLambda:
+    Type: AWS::Lambda::Function
+    Condition: IsActiveRegion
+    Properties:
+      FunctionName: !Sub "${ProjectName}-dynamodb-sync-stream"
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole" 
+      Runtime: python3.9
+      Timeout: 30 # Rapide, car on ne traite que la modification en cours
+      Environment:
+        Variables:
+          TABLE_NAME: !Sub "${ProjectName}-catalog-db"
+          DEST_REGION: "us-west-2"
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+
+          def lambda_handler(event, context):
+              dest_region = os.environ['DEST_REGION']
+              table_name = os.environ['TABLE_NAME']
+              
+              # Connexion à la base de destination (Ouest)
+              dynamo_dest = boto3.client('dynamodb', region_name=dest_region)
+              
+              # On parcourt chaque modification reçue en temps réel
+              for record in event['Records']:
+                  event_name = record['eventName']
+                  print(f"Traitement de l'événement: {event_name}")
+                  
+                  try:
+                      # Si c'est un ajout ou une modification
+                      if event_name in ['INSERT', 'MODIFY']:
+                          new_image = record['dynamodb']['NewImage']
+                          dynamo_dest.put_item(TableName=table_name, Item=new_image)
+                          print("Donnée repliquée avec succès.")
+                          
+                      # Si c'est une suppression
+                      elif event_name == 'REMOVE':
+                          keys = record['dynamodb']['Keys']
+                          dynamo_dest.delete_item(TableName=table_name, Key=keys)
+                          print("Donnée supprimée avec succès.")
+                          
+                  except Exception as e:
+                      print(f"Erreur lors de la réplication : {str(e)}")
+                      
+              return {"status": 200, "message": "Synchronisation continue terminée"}
+
+  # 0.3 Le lien (Trigger) entre le Stream DynamoDB et la Lambda
+  DynamoDBStreamToLambda:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: IsActiveRegion
+    Properties:
+      EventSourceArn: !GetAtt CatalogDatabase.StreamArn
+      FunctionName: !Ref SyncCatalogLambda
+      StartingPosition: LATEST
+
+  # =========================================================
+  # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS - MICROSERVICE USER)
+  # =========================================================
+
+  # 0.5 Groupe de sous-réseaux pour RDS
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS StreamFlex"
+      SubnetIds:
+        - !Ref PrivateSubnetAZ1
+        - !Ref PrivateSubnetAZ2
+
+  # 0.6 Security Group pour RDS (Le pare-feu de ta base de données)
+  RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      VpcId:
-        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
-      GroupDescription: Autorise le trafic HTTP entrant
+      GroupDescription: "Autorise l'acces a MySQL depuis l'interieur du VPC"
+      VpcId: !Ref MainVPC
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
       Tags:
         - Key: Name
-          Value: !Sub ${ProjectName}-alb-sg
+          Value: !Sub ${ProjectName}-rds-sg
 
-  ECSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
+  # 0.7 Instance RDS Active
+  UserDatabase:
+    Type: AWS::RDS::DBInstance
+    Condition: IsActiveRegion
     Properties:
-      VpcId:
-        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
-      GroupDescription: Autorise le trafic depuis ALB
-      SecurityGroupIngress:
-        # Autorise le port 8080 pour le service Catalog
-        - IpProtocol: tcp
-          FromPort: 8080
-          ToPort: 8080
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
-        # Autorise le port 5000 pour le service User
-        - IpProtocol: tcp
-          FromPort: 5000
-          ToPort: 5000
-          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      DBName: streamflexuserdb
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro # Format autorisé par le LabRole
+      Engine: mysql
+      EngineVersion: "8.0"
+      MasterUsername: admin
+      MasterUserPassword: StreamFlexPassword2026! 
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false 
+      BackupRetentionPeriod: 1 # OBLIGATOIRE (>0) pour pouvoir créer le Read Replica !
+      SkipFinalSnapshot: true 
+
+  # 0.8 Instance RDS Passive (Read Replica)
+  UserDatabaseReplica:
+    Type: AWS::RDS::DBInstance
+    Condition: IsPassiveRegion
+    Properties:
+      DBInstanceIdentifier: !Sub "${ProjectName}-user-db-replica"
+      # On cible l'ARN de la base primaire de us-east-1
+      SourceDBInstanceIdentifier: !Sub "arn:aws:rds:us-east-1:${AWS::AccountId}:db:${ProjectName}-user-db-primary"
+      DBInstanceClass: db.t3.micro
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      SkipFinalSnapshot: true
+### FIN MODIFICATION ( NOÉ) ###
+
+  # =========================================================
+  # COUCHE RESEAU (VPC)
+  # =========================================================
+
+  MainVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value: !Sub ${ProjectName}-ecs-sg
+          Value: !Sub ${ProjectName}-vpc
 
-  # 2. Application Load Balancer
-  ApplicationLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
     Properties:
-      Name: !Sub ${ProjectName}-alb
-      Scheme: internet-facing
-      Subnets:
-        - Fn::ImportValue: !Sub "${NetworkStackName}-PublicSubnet1"
-        - Fn::ImportValue: !Sub "${NetworkStackName}-PublicSubnet2"
-      SecurityGroups:
-        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-igw
 
-  # 3. Target Groups (Où l'ALB doit envoyer le trafic)
-  CatalogTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      Name: !Sub ${ProjectName}-tg-catalog
-      VpcId:
-        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
-      Port: 8080
-      Protocol: HTTP
-      TargetType: ip # Requis pour AWS Fargate
-      HealthCheckPath: /catalog
+      VpcId: !Ref MainVPC
+      InternetGatewayId: !Ref InternetGateway
 
-  UserTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+  PublicSubnetAZ1:
+    Type: AWS::EC2::Subnet
     Properties:
-      Name: !Sub ${ProjectName}-tg-user
-      VpcId:
-        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
-      Port: 5000
-      Protocol: HTTP
-      TargetType: ip # Requis pour AWS Fargate
-      HealthCheckPath: /user
+      VpcId: !Ref MainVPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs ''] 
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-public-az1
 
-  # 4. Listener et Règles de routage par chemin
-  ALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
+  PublicSubnetAZ2:
+    Type: AWS::EC2::Subnet
     Properties:
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
-      Port: 80
-      Protocol: HTTP
-      DefaultActions:
-        - Type: fixed-response
-          FixedResponseConfig:
-            StatusCode: 404
-            ContentType: text/plain
-            MessageBody: "Erreur 404 - Microservice introuvable sur StreamFlex"
+      VpcId: !Ref MainVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [1, !GetAZs ''] 
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-public-az2
 
-  CatalogListenerRule:
-    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+  PrivateSubnetAZ1:
+    Type: AWS::EC2::Subnet
     Properties:
-      ListenerArn: !Ref ALBListener
-      Priority: 10
-      Conditions:
-        - Field: path-pattern
-          Values:
-            - "/catalog*"
-      Actions:
-        - Type: forward
-          TargetGroupArn: !Ref CatalogTargetGroup
+      VpcId: !Ref MainVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-private-az1
 
-  UserListenerRule:
-    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+  PrivateSubnetAZ2:
+    Type: AWS::EC2::Subnet
     Properties:
-      ListenerArn: !Ref ALBListener
-      Priority: 20
-      Conditions:
-        - Field: path-pattern
-          Values:
-            - "/user*"
-      Actions:
-        - Type: forward
-          TargetGroupArn: !Ref UserTargetGroup
+      VpcId: !Ref MainVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-private-az2
+
+  NatElasticIP1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatElasticIP1.AllocationId
+      SubnetId: !Ref PublicSubnetAZ1
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-nat-az1
+
+  NatElasticIP2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatElasticIP2.AllocationId
+      SubnetId: !Ref PublicSubnetAZ2
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-nat-az2
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MainVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-public-rt
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MainVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-private-rt-az1
+
+  PrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAZ1
+      RouteTableId: !Ref PrivateRouteTable1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MainVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-private-rt-az2
+
+  PrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAZ2
+      RouteTableId: !Ref PrivateRouteTable2
 
 Outputs:
-  ALBUrl:
-    Description: URL publique du Load Balancer
-    Value: !GetAtt ApplicationLoadBalancer.DNSName
-  ECSSecurityGroupId:
-    Description: L'ID du Security Group pour les conteneurs
-    Value: !Ref ECSSecurityGroup
+  VpcId:
+    Value: !Ref MainVPC
     Export:
-      Name: "StreamFlex-ALB-ECSSG"
-  CatalogTargetGroupArn:
-    Value: !Ref CatalogTargetGroup
+      Name: "StreamFlex-Network-VpcId"
+  PublicSubnet1:
+    Value: !Ref PublicSubnetAZ1
     Export:
-      Name: "StreamFlex-ALB-CatalogTG"
-  UserTargetGroupArn:
-    Value: !Ref UserTargetGroup
+      Name: "StreamFlex-Network-PublicSubnet1"
+  PublicSubnet2:
+    Value: !Ref PublicSubnetAZ2
     Export:
-      Name: "StreamFlex-ALB-UserTG"
+      Name: "StreamFlex-Network-PublicSubnet2"
+  PrivateSubnet1:
+    Value: !Ref PrivateSubnetAZ1
+    Export:
+      Name: "StreamFlex-Network-PrivateSubnet1"
+  PrivateSubnet2:
+    Value: !Ref PrivateSubnetAZ2
+    Export:
+      Name: "StreamFlex-Network-PrivateSubnet2"

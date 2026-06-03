@@ -11,10 +11,12 @@ Parameters:
   ALBStackName:
     Type: String
     Default: StreamFlex-ALB
+### DEBUT MODIFICATION ( NOÉ) ###
   NbConteneurs:
     Type: Number
     Default: 2
     Description: Mettre à 2 pour la région Active, et 0 pour la région de Secours (Pilot Light)
+### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
   # 1. Le Cluster ECS
@@ -69,7 +71,9 @@ Resources:
       ServiceName: !Sub ${ProjectName}-catalog-svc
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref CatalogTaskDefinition
+### DEBUT MODIFICATION ( NOÉ) ###
       DesiredCount: !Ref NbConteneurs
+### FIN MODIFICATION ( NOÉ) ###
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -91,7 +95,9 @@ Resources:
       ServiceName: !Sub ${ProjectName}-user-svc
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref UserTaskDefinition
+### DEBUT MODIFICATION ( NOÉ) ###
       DesiredCount: !Ref NbConteneurs
+### FIN MODIFICATION ( NOÉ) ###
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
