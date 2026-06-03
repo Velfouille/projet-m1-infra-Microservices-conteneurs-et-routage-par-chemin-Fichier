@@ -5,18 +5,22 @@ Parameters:
   ProjectName:
     Type: String
     Default: streamflex
-  NetworkStackName:
+  VpcId:
     Type: String
-    Default: StreamFlex-Network
-    Description: Le nom de la stack réseau déployée précédemment
+    Description: L'ID du VPC depuis la stack réseau
+  PublicSubnet1:
+    Type: String
+    Description: Le subnet public AZ1 depuis la stack réseau
+  PublicSubnet2:
+    Type: String
+    Description: Le subnet public AZ2 depuis la stack réseau
 
 Resources:
   # 1. Security Groups (Le moindre privilège)
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      VpcId:
-        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      VpcId: !Ref VpcId
       GroupDescription: Autorise le trafic HTTP entrant
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -30,8 +34,7 @@ Resources:
   ECSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      VpcId:
-        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      VpcId: !Ref VpcId
       GroupDescription: Autorise le trafic depuis ALB
       SecurityGroupIngress:
         # Autorise le port 8080 pour le service Catalog
@@ -55,8 +58,8 @@ Resources:
       Name: !Sub ${ProjectName}-alb
       Scheme: internet-facing
       Subnets:
-        - Fn::ImportValue: !Sub "${NetworkStackName}-PublicSubnet1"
-        - Fn::ImportValue: !Sub "${NetworkStackName}-PublicSubnet2"
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
       SecurityGroups:
         - !Ref ALBSecurityGroup
 
@@ -65,8 +68,7 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub ${ProjectName}-tg-catalog
-      VpcId:
-        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      VpcId: !Ref VpcId
       Port: 8080
       Protocol: HTTP
       TargetType: ip # Requis pour AWS Fargate
@@ -76,8 +78,7 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub ${ProjectName}-tg-user
-      VpcId:
-        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      VpcId: !Ref VpcId
       Port: 5000
       Protocol: HTTP
       TargetType: ip # Requis pour AWS Fargate
@@ -131,12 +132,12 @@ Outputs:
     Description: L'ID du Security Group pour les conteneurs
     Value: !Ref ECSSecurityGroup
     Export:
-      Name: "StreamFlex-ALB-ECSSG"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-ECSSG"
   CatalogTargetGroupArn:
     Value: !Ref CatalogTargetGroup
     Export:
-      Name: "StreamFlex-ALB-CatalogTG"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-CatalogTG"
   UserTargetGroupArn:
     Value: !Ref UserTargetGroup
     Export:
-      Name: "StreamFlex-ALB-UserTG"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-UserTG"

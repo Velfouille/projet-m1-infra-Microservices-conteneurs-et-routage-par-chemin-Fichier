@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB'
+Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (Sync Continue DynamoDB Streams & RDS)'
 
 Parameters:
   ProjectName:
@@ -7,18 +7,19 @@ Parameters:
     Default: streamflex
     Description: Nom du projet utilisé pour tagger les ressources
 
-### DEBUT MODIFICATION ( NOÉ) ###
-# Condition pour s'assurer que la base de données ne soit créée qu'une seule fois 
-# (depuis la région Active) pour éviter les erreurs CloudFormation.
+# Condition pour s'assurer de déployer les bonnes ressources dans les bonnes régions
 Conditions:
   IsActiveRegion: !Equals [ !Ref "AWS::Region", "us-east-1" ]
-### FIN MODIFICATION ( NOÉ) ###
+  IsPassiveRegion: !Equals [ !Ref "AWS::Region", "us-west-2" ]
 
 Resources:
-# 0. Base de données Active (Déploiement régional forcé par les restrictions de droits)
+  # =========================================================
+  # COUCHE BASE DE DONNÉES NOSQL (DYNAMODB - CATALOGUE)
+  # =========================================================
+  
+  # 0.1 Base de données DynamoDB (Créée dans les deux régions)
   CatalogDatabase:
     Type: AWS::DynamoDB::Table
-    Condition: IsActiveRegion 
     Properties:
       TableName: !Sub "${ProjectName}-catalog-db"
       AttributeDefinitions:
@@ -28,76 +29,109 @@ Resources:
         - AttributeName: id
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
+      # Activation de DynamoDB Streams pour capturer chaque modification
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
 
-### DEBUT MODIFICATION ( NOÉ) ###
-# 0. Base de données Active-Active (DynamoDB Global Tables) // PAS UTILISABLE CAR PAS LES DROITS SUR LABROLE //
-#  CatalogDatabase:
-#    Type: AWS::DynamoDB::GlobalTable
-#    Condition: IsActiveRegion 
-#    Properties:
-#      TableName: !Sub "${ProjectName}-catalog-db"
-#      AttributeDefinitions:
-#        - AttributeName: id
-#          AttributeType: S
-#      KeySchema:
-#        - AttributeName: id
-#          KeyType: HASH
-#      BillingMode: PAY_PER_REQUEST
-#      Replicas:
-#        - Region: us-east-1
-#        - Region: us-west-2
-### FIN MODIFICATION ( NOÉ) ###
+  # 0.2 Fonction Lambda de Synchronisation Continue (Travail du collègue)
+  SyncCatalogLambda:
+    Type: AWS::Lambda::Function
+    Condition: IsActiveRegion
+    Properties:
+      FunctionName: !Sub "${ProjectName}-dynamodb-sync-stream"
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole" 
+      Runtime: python3.9
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Sub "${ProjectName}-catalog-db"
+          DEST_REGION: "us-west-2"
+      Code:
+        ZipFile: |
+          import boto3
+          import os
 
-# =========================================================
+          def lambda_handler(event, context):
+              dest_region = os.environ['DEST_REGION']
+              table_name = os.environ['TABLE_NAME']
+              dynamo_dest = boto3.client('dynamodb', region_name=dest_region)
+              for record in event['Records']:
+                  event_name = record['eventName']
+                  try:
+                      if event_name in ['INSERT', 'MODIFY']:
+                          new_image = record['dynamodb']['NewImage']
+                          dynamo_dest.put_item(TableName=table_name, Item=new_image)
+                      elif event_name == 'REMOVE':
+                          keys = record['dynamodb']['Keys']
+                          dynamo_dest.delete_item(TableName=table_name, Key=keys)
+                  except Exception as e:
+                      print(f"Erreur lors de la réplication : {str(e)}")
+              return {"status": 200, "message": "Synchronisation continue terminée"}
+
+  # 0.3 Le lien (Trigger) entre le Stream DynamoDB et la Lambda
+  DynamoDBStreamToLambda:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: IsActiveRegion
+    Properties:
+      EventSourceArn: !GetAtt CatalogDatabase.StreamArn
+      FunctionName: !Ref SyncCatalogLambda
+      StartingPosition: LATEST
+
+
+  # =========================================================
   # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS - MICROSERVICE USER)
   # =========================================================
 
-  # 0.3 Groupe de sous-réseaux pour RDS (Place la DB dans tes subnets privés)
-  RDSSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Condition: IsActiveRegion
-    Properties:
-      DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS StreamFlex"
-      SubnetIds:
-        - !Ref PrivateSubnetAZ1
-        - !Ref PrivateSubnetAZ2
+  # # 0.4 Groupe de sous-réseaux pour RDS
+  # RDSSubnetGroup:
+  #   Type: AWS::RDS::DBSubnetGroup
+  #   Properties:
+  #     DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS"
+  #     SubnetIds:
+  #       - !Ref PrivateSubnetAZ1
+  #       - !Ref PrivateSubnetAZ2
 
-  # 0.4 Security Group pour RDS (Le pare-feu de ta base de données)
-  RDSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Condition: IsActiveRegion
-    Properties:
-      GroupDescription: "Autorise l'acces a MySQL depuis l'interieur du VPC"
-      VpcId: !Ref MainVPC
-      SecurityGroupIngress:
-        # Port MySQL (3306). Si l'image Docker 'user' utilise PostgreSQL, remplace par 5432.
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          CidrIp: 10.0.0.0/16 # Seules les ressources dans le VPC (comme tes conteneurs ECS) peuvent s'y connecter
-      Tags:
-        - Key: Name
-          Value: !Sub ${ProjectName}-rds-sg
+  # 0.5 Security Group pour RDS (Notre version blindée et stricte)
+  # RDSSecurityGroup:
+  #   Type: AWS::EC2::SecurityGroup
+  #   Properties:
+  #     GroupDescription: "Acces MySQL strict pour les conteneurs ECS"
+  #     VpcId: !Ref MainVPC
+  #     SecurityGroupIngress:
+  #       - IpProtocol: tcp
+  #         FromPort: 3306
+  #         ToPort: 3306
+  #         CidrIp: 10.0.2.0/24 
+  #       - IpProtocol: tcp
+  #         FromPort: 3306
+  #         ToPort: 3306
+  #         CidrIp: 10.0.3.0/24
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub ${ProjectName}-rds-sg
 
-  # 0.5 Instance RDS Active
-  UserDatabase:
-    Type: AWS::RDS::DBInstance
-    Condition: IsActiveRegion
-    Properties:
-      DBName: streamflexuserdb
-      AllocatedStorage: 20
-      DBInstanceClass: db.t3.micro # Format autorisé par le LabRole
-      Engine: mysql
-      EngineVersion: "8.0"
-      MasterUsername: admin
-      MasterUserPassword: StreamFlexPassword2026! # En production, ceci serait dans AWS Secrets Manager
-      DBSubnetGroupName: !Ref RDSSubnetGroup
-      VPCSecurityGroups:
-        - !Ref RDSSecurityGroup
-      PubliclyAccessible: false # La base est strictement privée
-      SkipFinalSnapshot: true # CRITIQUE : Permet à ton ./destroy.sh de fonctionner sans erreur de sauvegarde
+# 0.6 Instance RDS Active - COMMENTÉE POUR VALIDATION DE L'INFRA
+# UserDatabase:
+#   Type: AWS::RDS::DBInstance
+#   Condition: IsActiveRegion
+#   DeletionPolicy: Delete
+#   Properties:
+#     AllocatedStorage: 20
+#     DBInstanceClass: db.t2.micro
+#     Engine: mysql
+#     MasterUsername: adminuser
+#     MasterUserPassword: StreamflexPassword123
+#     DBSubnetGroupName: !Ref RDSSubnetGroup
+#     VPCSecurityGroups:
+#       - !Ref RDSSecurityGroup
+#     PubliclyAccessible: false
 
-  # 1. Le VPC Principal
+
+  # =========================================================
+  # COUCHE RESEAU (VPC)
+  # =========================================================
+
   MainVPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -108,7 +142,6 @@ Resources:
         - Key: Name
           Value: !Sub ${ProjectName}-vpc
 
-  # 2. Internet Gateway (Pour que le VPC ait accès à internet)
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
@@ -122,7 +155,6 @@ Resources:
       VpcId: !Ref MainVPC
       InternetGatewayId: !Ref InternetGateway
 
-  # 3. Sous-réseaux Publics (Pour l'ALB et la NAT Gateway)
   PublicSubnetAZ1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -145,7 +177,6 @@ Resources:
         - Key: Name
           Value: !Sub ${ProjectName}-public-az2
 
-  # 4. Sous-réseaux Privés (Pour les conteneurs ECS Fargate)
   PrivateSubnetAZ1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -166,7 +197,6 @@ Resources:
         - Key: Name
           Value: !Sub ${ProjectName}-private-az2
 
-  # 5. NAT Gateways (Haute Disponibilité sur 2 AZ)
   NatElasticIP1:
     Type: AWS::EC2::EIP
     Properties:
@@ -195,7 +225,6 @@ Resources:
         - Key: Name
           Value: !Sub ${ProjectName}-nat-az2
 
-  # 6. Tables de Routage
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -270,20 +299,20 @@ Outputs:
   VpcId:
     Value: !Ref MainVPC
     Export:
-      Name: "StreamFlex-Network-VpcId"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-VpcId" # Devient : streamflex-NomDeLaStack-VpcId
   PublicSubnet1:
     Value: !Ref PublicSubnetAZ1
     Export:
-      Name: "StreamFlex-Network-PublicSubnet1"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-PublicSubnet1"
   PublicSubnet2:
     Value: !Ref PublicSubnetAZ2
     Export:
-      Name: "StreamFlex-Network-PublicSubnet2"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-PublicSubnet2"
   PrivateSubnet1:
     Value: !Ref PrivateSubnetAZ1
     Export:
-      Name: "StreamFlex-Network-PrivateSubnet1"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-PrivateSubnet1"
   PrivateSubnet2:
     Value: !Ref PrivateSubnetAZ2
     Export:
-      Name: "StreamFlex-Network-PrivateSubnet2"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-PrivateSubnet2"

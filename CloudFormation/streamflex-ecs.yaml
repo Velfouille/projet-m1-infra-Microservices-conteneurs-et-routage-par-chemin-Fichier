@@ -5,16 +5,28 @@ Parameters:
   ProjectName:
     Type: String
     Default: streamflex
-  NetworkStackName:
+  PrivateSubnet1:
     Type: String
-    Default: StreamFlex-Network
-  ALBStackName:
+    Description: Le subnet privé AZ1 depuis la stack réseau
+  PrivateSubnet2:
     Type: String
-    Default: StreamFlex-ALB
+    Description: Le subnet privé AZ2 depuis la stack réseau
+  ECSSecurityGroupId:
+    Type: String
+    Description: L'ID du security group ECS depuis la stack ALB
+  CatalogTargetGroupArn:
+    Type: String
+    Description: L'ARN du target group Catalog depuis la stack ALB
+  UserTargetGroupArn:
+    Type: String
+    Description: L'ARN du target group User depuis la stack ALB
   NbConteneurs:
     Type: Number
     Default: 2
     Description: Mettre à 2 pour la région Active, et 0 pour la région de Secours (Pilot Light)
+  TeamPrefix:
+    Type: String
+    Description: Initiales de l'équipe pour l'unicité des buckets S3
 
 Resources:
   # 1. Le Cluster ECS
@@ -75,15 +87,14 @@ Resources:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet1"
-            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet2"
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
           SecurityGroups:
-            - Fn::ImportValue: !Sub "${ALBStackName}-ECSSG"
+            - !Ref ECSSecurityGroupId
       LoadBalancers:
         - ContainerName: catalog-app
           ContainerPort: 8080
-          TargetGroupArn:
-            Fn::ImportValue: !Sub "${ALBStackName}-CatalogTG"
+          TargetGroupArn: !Ref CatalogTargetGroupArn
 
   UserService:
     Type: AWS::ECS::Service
@@ -97,24 +108,21 @@ Resources:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet1"
-            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet2"
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
           SecurityGroups:
-            - Fn::ImportValue: !Sub "${ALBStackName}-ECSSG"
+            - !Ref ECSSecurityGroupId
       LoadBalancers:
         - ContainerName: user-app
           ContainerPort: 5000
-          TargetGroupArn:
-            Fn::ImportValue: !Sub "${ALBStackName}-UserTG"
+          TargetGroupArn: !Ref UserTargetGroupArn
 
   # 4. Hébergement du Front-End (Portail S3)
   FrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
-### DEBUT MODIFICATION ( NOÉ) ###
-      # Ajout de la région dans le nom pour permettre le multi-région S3
-      BucketName: !Sub "s3-projet-m1-infra-cloud-mbn-${AWS::Region}"
-### FIN MODIFICATION ( NOÉ) ###
+      # 👇 Remplacement de 'mbn' par '${TeamPrefix}'
+      BucketName: !Sub "s3-projet-m1-infra-cloud-${TeamPrefix}-${AWS::Region}"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
         BlockPublicPolicy: false
@@ -134,14 +142,11 @@ Resources:
             Effect: Allow
             Principal: "*"
             Action: s3:GetObject
-### DEBUT MODIFICATION ( NOÉ) ###
-            # Mise à jour de l'ARN  le nom dynamique du bucket
-            Resource: !Sub "arn:aws:s3:::s3-projet-m1-infra-cloud-mbn-${AWS::Region}/*"
-### FIN MODIFICATION ( NOÉ) ###
+            # 👇 Remplacement de 'mbn' par '${TeamPrefix}'
+            Resource: !Sub "arn:aws:s3:::s3-projet-m1-infra-cloud-${TeamPrefix}-${AWS::Region}/*"
 
 Outputs:
   FrontendURL:
     Description: "L'URL publique de ton site vitrine StreamFlex"
-### DEBUT MODIFICATION ( NOÉ) ###
-    Value: !Sub "http://s3-projet-m1-infra-cloud-mbn-${AWS::Region}.s3-website-${AWS::Region}.amazonaws.com"
-### FIN MODIFICATION ( NOÉ) ###
+    # 👇 Remplacement de 'mbn' par '${TeamPrefix}'
+    Value: !Sub "http://s3-projet-m1-infra-cloud-${TeamPrefix}-${AWS::Region}.s3-website-${AWS::Region}.amazonaws.com"
