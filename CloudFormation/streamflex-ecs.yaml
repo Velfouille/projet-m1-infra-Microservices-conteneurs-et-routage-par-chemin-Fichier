@@ -11,7 +11,6 @@ Parameters:
   ALBStackName:
     Type: String
     Default: StreamFlex-ALB
-  # Paramètre clé pour le Pilot Light (Disaster Recovery)
   NbConteneurs:
     Type: Number
     Default: 2
@@ -34,9 +33,8 @@ Resources:
       RequiresCompatibilities:
         - FARGATE
       NetworkMode: awsvpc
-      Cpu: 256     # 0.25 vCPU comme demandé
-      Memory: 512  # 512 Mo de RAM
-      # Utilisation du rôle étudiant obligatoire (LabRole)
+      Cpu: 256
+      Memory: 512
       ExecutionRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
@@ -71,11 +69,11 @@ Resources:
       ServiceName: !Sub ${ProjectName}-catalog-svc
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref CatalogTaskDefinition
-      DesiredCount: !Ref NbConteneurs # Géré dynamiquement pour le Pilot Light
+      DesiredCount: !Ref NbConteneurs
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: DISABLED # Les conteneurs sont protégés en sous-réseau privé
+          AssignPublicIp: DISABLED
           Subnets:
             - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet1"
             - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet2"
@@ -113,7 +111,10 @@ Resources:
   FrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: s3-projet-m1-infra-cloud-mbn
+### DEBUT MODIFICATION ( NOÉ) ###
+      # Ajout de la région dans le nom pour permettre le multi-région S3
+      BucketName: !Sub "s3-projet-m1-infra-cloud-mbn-${AWS::Region}"
+### FIN MODIFICATION ( NOÉ) ###
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
         BlockPublicPolicy: false
@@ -133,9 +134,14 @@ Resources:
             Effect: Allow
             Principal: "*"
             Action: s3:GetObject
-            Resource: !Sub "arn:aws:s3:::${FrontendBucket}/*"
+### DEBUT MODIFICATION ( NOÉ) ###
+            # Mise à jour de l'ARN  le nom dynamique du bucket
+            Resource: !Sub "arn:aws:s3:::s3-projet-m1-infra-cloud-mbn-${AWS::Region}/*"
+### FIN MODIFICATION ( NOÉ) ###
 
 Outputs:
   FrontendURL:
     Description: "L'URL publique de ton site vitrine StreamFlex"
-    Value: !Sub "http://s3-projet-m1-infra-cloud-mbn.s3-website-${AWS::Region}.amazonaws.com"
+### DEBUT MODIFICATION ( NOÉ) ###
+    Value: !Sub "http://s3-projet-m1-infra-cloud-mbn-${AWS::Region}.s3-website-${AWS::Region}.amazonaws.com"
+### FIN MODIFICATION ( NOÉ) ###

@@ -1,21 +1,37 @@
 #!/bin/bash
+set -e
 
-echo "🧹 Début de la destruction de l'infrastructure StreamFlex..."
+### DEBUT MODIFICATION (AVEC NOÉ) ###
+REGION_ACTIVE="us-east-1"
+REGION_PASSIVE="us-west-2"
+MASTER_STACK_NAME="StreamFlex-Master"
+TEMPLATE_BUCKET="s3-streamflex-templates-mbn" 
+FRONTEND_BUCKET_BASE="s3-projet-m1-infra-cloud-mbn"
+### FIN MODIFICATION (AVEC NOÉ) ###
 
-# ÉTAPE 0 : Vider le bucket S3 (Sinon CloudFormation plantera)
-echo "🗑️  0/3 : Vidage du bucket S3 front-end..."
-aws s3 rm s3://s3-projet-m1-infra-cloud-mbn --recursive || true
+echo "🧹 Début de la destruction de l'infrastructure globale Multi-Région..."
 
-echo "1/3 : Suppression des conteneurs ECS..."
-aws cloudformation delete-stack --stack-name StreamFlex-ECS --region us-east-1
-aws cloudformation wait stack-delete-complete --stack-name StreamFlex-ECS --region us-east-1
+### DEBUT MODIFICATION (AVEC NOÉ) ###
+echo "🗑️  0/2 : Vidage des buckets S3 pour autoriser la suppression..."
+# Vidage des deux buckets Front (Actif et Passif)
+aws s3 rm s3://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE} --recursive || true
+aws s3 rm s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE} --recursive || true
+aws s3 rm s3://$TEMPLATE_BUCKET --recursive || true
 
-echo "2/3 : Suppression du Load Balancer..."
-aws cloudformation delete-stack --stack-name StreamFlex-ALB --region us-east-1
-aws cloudformation wait stack-delete-complete --stack-name StreamFlex-ALB --region us-east-1
+echo "🔥 1/2 : Suppression des Master Stacks (ECS, ALB, Réseau) en parallèle..."
+# Le petit '&' à la fin permet de lancer la suppression des deux régions en même temps
+aws cloudformation delete-stack --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE &
+aws cloudformation delete-stack --stack-name $MASTER_STACK_NAME --region $REGION_ACTIVE &
 
-echo "3/3 : Suppression du Réseau..."
-aws cloudformation delete-stack --stack-name StreamFlex-Network --region us-east-1
-aws cloudformation wait stack-delete-complete --stack-name StreamFlex-Network --region us-east-1
+echo "⏳ Attente de la destruction (cela peut prendre environ 5 à 10 minutes)..."
+aws cloudformation wait stack-delete-complete --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE
+aws cloudformation wait stack-delete-complete --stack-name $MASTER_STACK_NAME --region $REGION_ACTIVE
+### FIN MODIFICATION (AVEC NOÉ) ###
 
-echo "✅ Destruction terminée ! Plus rien ne t'est facturé."
+echo "📦 2/2 : Suppression du bucket technique S3..."
+aws s3 rb s3://$TEMPLATE_BUCKET --force || true
+
+echo "------------------------------------------------------"
+echo "✅ Destruction multi-région terminée avec succès !"
+echo "Plus aucune ressource n'est active, ta facturation est à zéro."
+echo "------------------------------------------------------"

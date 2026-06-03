@@ -1,58 +1,65 @@
 #!/bin/bash
 set -e
 
-# Configuration des noms de stack
-NET_STACK="StreamFlex-Network"
-ALB_STACK="StreamFlex-ALB"
-ECS_STACK="StreamFlex-ECS"
-REGION="us-east-1"
+### DEBUT MODIFICATION ( NOÉ) ###
+# Ajout des variables pour piloter les deux régions
+REGION_ACTIVE="us-east-1"
+REGION_PASSIVE="us-west-2"
+MASTER_STACK_NAME="StreamFlex-Master"
+TEMPLATE_BUCKET="s3-streamflex-templates-mbn" 
+# On garde juste le préfixe du bucket front-end (la région sera ajoutée dynamiquement)
+FRONTEND_BUCKET_BASE="s3-projet-m1-infra-cloud-mbn"
+### FIN MODIFICATION ( NOÉ) ###
 
-echo "🚀 Démarrage du déploiement synchronisé StreamFlex..."
+echo "🚀 Démarrage du déploiement Multi-Région StreamFlex..."
 
-# 1. RÉSEAU
-echo "📦 [1/3] Déploiement du réseau (VPC, Subnets, NAT)..."
+echo "🪣  0/4 : Création du bucket de templates global..."
+if aws s3api head-bucket --bucket "$TEMPLATE_BUCKET" 2>/dev/null; then
+    echo "Le bucket $TEMPLATE_BUCKET existe déjà."
+else
+    aws s3 mb s3://$TEMPLATE_BUCKET --region $REGION_ACTIVE
+fi
+
+echo "📁 1/4 : Upload des templates YAML vers S3..."
+aws s3 cp streamflex-infra.yaml s3://$TEMPLATE_BUCKET/
+aws s3 cp streamflex-alb.yaml s3://$TEMPLATE_BUCKET/
+aws s3 cp streamflex-ecs.yaml s3://$TEMPLATE_BUCKET/
+aws s3 cp streamflex-master.yaml s3://$TEMPLATE_BUCKET/
+
+### DEBUT MODIFICATION ( NOÉ) ###
+# Déploiement en 2 temps (Actif  2 conteneurs, Passif  0 conteneur)
+echo "🏗️  2/4 : Déploiement de la région ACTIVE ($REGION_ACTIVE)..."
 aws cloudformation deploy \
-  --template-file streamflex-infra.yaml \
-  --stack-name $NET_STACK \
-  --region $REGION \
+  --template-file streamflex-master.yaml \
+  --stack-name $MASTER_STACK_NAME \
+  --region $REGION_ACTIVE \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 \
+  --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
-# 2. ALB (Sécurité & Routage)
-echo "🚦 [2/3] Déploiement de l'ALB et des Security Groups..."
+echo "🏗️  3/4 : Déploiement de la région PASSIVE ($REGION_PASSIVE - Pilot Light)..."
 aws cloudformation deploy \
-  --template-file streamflex-alb.yaml \
-  --stack-name $ALB_STACK \
-  --region $REGION \
+  --template-file streamflex-master.yaml \
+  --stack-name $MASTER_STACK_NAME \
+  --region $REGION_PASSIVE \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 \
+  --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
-# 3. ECS (Conteneurs)
-echo "🐳 [3/3] Déploiement des services Fargate..."
-aws cloudformation deploy \
-  --template-file streamflex-ecs.yaml \
-  --stack-name $ECS_STACK \
-  --region $REGION \
-  --no-fail-on-empty-changeset
+echo "🌐 4/4 : Envoi du fichier index.html vers S3 sur les deux régions..."
+aws s3 cp ../index.html s3://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}/
+aws s3 cp ../index.html s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}/
 
-echo "✅ BRAVO ! L'infrastructure est en ligne."
+# Récupération des URLs pour les DEUX régions
+ALB_URL_ACTIVE=$(aws cloudformation describe-stacks --stack-name $MASTER_STACK_NAME --region $REGION_ACTIVE --query "Stacks[0].Outputs[?OutputKey=='MasterALBUrl'].OutputValue" --output text || echo "ALB_ACTIF_NON_TROUVE")
+ALB_URL_PASSIVE=$(aws cloudformation describe-stacks --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE --query "Stacks[0].Outputs[?OutputKey=='MasterALBUrl'].OutputValue" --output text || echo "ALB_PASSIF_NON_TROUVE")
 echo "------------------------------------------------------"
-
-# 4. Récupération des points d'entrée
-echo "🔍 Récupération des points d'entrée..."
-
-ALB_URL=$(aws cloudformation describe-stacks \
-  --stack-name $ALB_STACK \
-  --region $REGION \
-  --query "Stacks[0].Outputs[?OutputKey=='ALBUrl'].OutputValue" \
-  --output text)
-
-FRONTEND_URL="http://s3-projet-m1-infra-cloud-mbn.s3-website-us-east-1.amazonaws.com"
-
-echo "🌐 Envoi du fichier index.html vers S3..."
-aws s3 cp ../index.html s3://s3-projet-m1-infra-cloud-mbn/
-
+echo "🎉 PROJET MULTI-RÉGION TERMINÉ ! Voici tes liens :"
+echo "🌍 PORTAIL FRONT-END :"
+echo " - Principal : http://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}.s3-website-${REGION_ACTIVE}.amazonaws.com"
+echo " - Secours   : http://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}.s3-website-${REGION_PASSIVE}.amazonaws.com"
+echo "⚙️  ALB (APIs) :"
+echo " - Active  : http://$ALB_URL_ACTIVE"
+echo " - Passive : http://$ALB_URL_PASSIVE (Attention, 0 conteneur démarré !)"
 echo "------------------------------------------------------"
-echo "🎉 PROJET TERMINÉ ! Voici tes liens :"
-echo "💻 Portail Web (Front-End) : $FRONTEND_URL"
-echo "⚙️  API Catalogue directe : http://$ALB_URL/catalog"
-echo "⚙️  API Utilisateurs directe : http://$ALB_URL/user"
-echo "------------------------------------------------------"
+### FIN MODIFICATION ( NOÉ) ###

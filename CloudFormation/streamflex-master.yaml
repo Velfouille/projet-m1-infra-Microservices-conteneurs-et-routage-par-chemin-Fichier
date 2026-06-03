@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'StreamFlex - Master Stack (Reseau, ALB, ECS)'
+
+Parameters:
+  TemplateBucket:
+    Type: String
+    Description: Nom du bucket S3 contenant les templates enfants
+### DEBUT MODIFICATION ( NOÉ) ###
+  # Ajout du paramètre pour gérer le nombre de conteneurs (Active/Passive)
+  NbConteneurs:
+    Type: Number
+    Default: 2
+    Description: Mettre à 2 pour la région Active, et 0 pour la région de Secours (Pilot Light)
+### FIN MODIFICATION ( NOÉ) ###
+
+Resources:
+  # 1. Couche Réseau
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.amazonaws.com/streamflex-infra.yaml"
+
+  # 2. Couche Load Balancer (Dépend du Réseau)
+  ALBStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: NetworkStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.amazonaws.com/streamflex-alb.yaml"
+
+  # 3. Couche ECS et Front-End (Dépend de l'ALB)
+  ECSStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: ALBStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.amazonaws.com/streamflex-ecs.yaml"
+### DEBUT MODIFICATION ( NOÉ) ###
+      # On passe la variable jusqu'au template ECS
+      Parameters:
+        NbConteneurs: !Ref NbConteneurs
+### FIN MODIFICATION ( NOÉ) ###
+
+Outputs:
+  MasterALBUrl:
+    Description: URL de l'Application Load Balancer
+    # On va chercher l'output "ALBUrl" à l'intérieur de la sous-pile "ALBStack"
+    Value: !GetAtt ALBStack.Outputs.ALBUrl

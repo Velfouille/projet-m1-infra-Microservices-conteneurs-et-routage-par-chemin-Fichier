@@ -131,12 +131,12 @@ Outputs:
     Description: L'ID du Security Group pour les conteneurs
     Value: !Ref ECSSecurityGroup
     Export:
-      Name: !Sub "${AWS::StackName}-ECSSG"
+      Name: "StreamFlex-ALB-ECSSG"
   CatalogTargetGroupArn:
     Value: !Ref CatalogTargetGroup
     Export:
-      Name: !Sub "${AWS::StackName}-CatalogTG"
+      Name: "StreamFlex-ALB-CatalogTG"
   UserTargetGroupArn:
     Value: !Ref UserTargetGroup
     Export:
-      Name: !Sub "${AWS::StackName}-UserTG"
+      Name: "StreamFlex-ALB-UserTG"
