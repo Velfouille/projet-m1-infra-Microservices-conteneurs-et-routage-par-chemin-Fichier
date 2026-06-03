@@ -15,3 +15,9 @@
           - Bastien, Mathias & Noe : Mise a jour du schema
           - Bastien, Mathias & Noe : Creation du frontend
           - Bastien, Mathias & Noe : update streamflex-ecs.yaml
+
+03/06 :
+          - Bastien : Mise à jour du schéma dans une version finale complète
+          - Noé : Etude et mise en place de la réplication de deuxième région
+          - Noé & Mathias : Etude des différentes solutions de réplication des BDD DynamoDB et RDS d'une région à une autre
+          - Bastien : Etude et création du document etude-iam.md explicant les politiques IAM à intégrer dans le projet
