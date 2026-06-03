@@ -111,21 +111,21 @@ Resources:
         - Key: Name
           Value: !Sub ${ProjectName}-rds-sg
 
-  # 0.6 Instance RDS Active (Notre version qui passe la validation AWS)
-  UserDatabase:
-    Type: AWS::RDS::DBInstance
-    Condition: IsActiveRegion
-    DeletionPolicy: Delete
-    Properties:
-      AllocatedStorage: "20"
-      DBInstanceClass: db.t2.micro
-      Engine: mysql
-      MasterUsername: adminuser
-      MasterUserPassword: StreamflexPassword123
-      DBSubnetGroupName: !Ref RDSSubnetGroup
-      VPCSecurityGroups:
-        - !Ref RDSSecurityGroup
-      PubliclyAccessible: false
+# 0.6 Instance RDS Active - COMMENTÉE POUR VALIDATION DE L'INFRA
+  # UserDatabase:
+  #   Type: AWS::RDS::DBInstance
+  #   Condition: IsActiveRegion
+  #   DeletionPolicy: Delete
+  #   Properties:
+  #     AllocatedStorage: 20
+  #     DBInstanceClass: db.t2.micro
+  #     Engine: mysql
+  #     MasterUsername: adminuser
+  #     MasterUserPassword: StreamflexPassword123
+  #     DBSubnetGroupName: !Ref RDSSubnetGroup
+  #     VPCSecurityGroups:
+  #       - !Ref RDSSecurityGroup
+  #     PubliclyAccessible: false
 
 
   # =========================================================
