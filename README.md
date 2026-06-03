@@ -59,8 +59,11 @@ problèmes de droits sur le LabRole
 
 Pour vraiment auto-re-basculer, il faudrait :
 Route53 Health Check → ❌ LabRole ne l'autorise pas
+
 DNS failover → ❌ Impossible en lab
+
 Polling continu → ⚠️ Possible mais cher en requêtes
 
 **Pourquoi pas RDS ?**
+
 problèmes de droits sur le LabRole
