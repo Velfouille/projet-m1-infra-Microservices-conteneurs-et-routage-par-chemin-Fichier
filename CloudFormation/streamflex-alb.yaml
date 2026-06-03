@@ -327,20 +327,20 @@ Outputs:
   VpcId:
     Value: !Ref MainVPC
     Export:
-      Name: "StreamFlex-Network-VpcId"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-VpcId"
   PublicSubnet1:
     Value: !Ref PublicSubnetAZ1
     Export:
-      Name: "StreamFlex-Network-PublicSubnet1"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-PublicSubnet1"
   PublicSubnet2:
     Value: !Ref PublicSubnetAZ2
     Export:
-      Name: "StreamFlex-Network-PublicSubnet2"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-PublicSubnet2"
   PrivateSubnet1:
     Value: !Ref PrivateSubnetAZ1
     Export:
-      Name: "StreamFlex-Network-PrivateSubnet1"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-PrivateSubnet1"
   PrivateSubnet2:
     Value: !Ref PrivateSubnetAZ2
     Export:
-      Name: "StreamFlex-Network-PrivateSubnet2"
+      Name: !Sub "${ProjectName}-${AWS::StackName}-PrivateSubnet2"

@@ -101,8 +101,8 @@ Resources:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet1"
-            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet2"
+            - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet1"
+            - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet2"
           SecurityGroups:
             - Fn::ImportValue: !Sub "${ALBStackName}-ECSSG"
       LoadBalancers:
