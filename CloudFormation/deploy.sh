@@ -61,12 +61,12 @@ ALB_URL_PASSIVE=$(aws cloudformation describe-stacks --stack-name $MASTER_STACK_
 
 echo "🌐 4/4 : Préparation et envoi des fichiers index.html dynamiques..."
 
-# Pour la région ACTIVE : on remplace les balises et on crée un fichier temporaire
-sed -e "s/{{ALB_URL}}/$ALB_URL_ACTIVE/g" -e "s/{{REGION_NAME}}/$REGION_ACTIVE (ACTIVE)/g" ../index.html > index_active.html
+# Pour la région ACTIVE : on remplace les balises avec les 2 URLs (active + passive)
+sed -e "s|{{ALB_URL}}|$ALB_URL_ACTIVE|g" -e "s|{{ALB_URL_PASSIVE}}|$ALB_URL_PASSIVE|g" -e "s/{{REGION_NAME}}/$REGION_ACTIVE (ACTIVE)/g" ../index.html > index_active.html
 aws s3 cp index_active.html s3://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}/index.html
 
-# Pour la région PASSIVE : on remplace les balises pour qu'elles pointent vers l'ALB de secours
-sed -e "s/{{ALB_URL}}/$ALB_URL_PASSIVE/g" -e "s/{{REGION_NAME}}/$REGION_PASSIVE (SECOURS)/g" ../index.html > index_passive.html
+# Pour la région PASSIVE : on remplace les balises (même contenu, c'est le frontend qui décide)
+sed -e "s|{{ALB_URL}}|$ALB_URL_ACTIVE|g" -e "s|{{ALB_URL_PASSIVE}}|$ALB_URL_PASSIVE|g" -e "s/{{REGION_NAME}}/$REGION_PASSIVE (SECOURS)/g" ../index.html > index_passive.html
 aws s3 cp index_passive.html s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}/index.html
 
 # Nettoyage des fichiers temporaires
