@@ -11,12 +11,14 @@ Parameters:
   ALBStackName:
     Type: String
     Default: StreamFlex-ALB
-### DEBUT MODIFICATION ( NOÉ) ###
   NbConteneurs:
     Type: Number
     Default: 2
     Description: Mettre à 2 pour la région Active, et 0 pour la région de Secours (Pilot Light)
-### FIN MODIFICATION ( NOÉ) ###
+  # 👇 AJOUT DU PARAMÈTRE DYNAMIQUE
+  TeamPrefix:
+    Type: String
+    Description: Initiales de l'équipe pour l'unicité des buckets S3
 
 Resources:
   # 1. Le Cluster ECS
@@ -71,9 +73,7 @@ Resources:
       ServiceName: !Sub ${ProjectName}-catalog-svc
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref CatalogTaskDefinition
-### DEBUT MODIFICATION ( NOÉ) ###
       DesiredCount: !Ref NbConteneurs
-### FIN MODIFICATION ( NOÉ) ###
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -95,9 +95,7 @@ Resources:
       ServiceName: !Sub ${ProjectName}-user-svc
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref UserTaskDefinition
-### DEBUT MODIFICATION ( NOÉ) ###
       DesiredCount: !Ref NbConteneurs
-### FIN MODIFICATION ( NOÉ) ###
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -117,10 +115,8 @@ Resources:
   FrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
-### DEBUT MODIFICATION ( NOÉ) ###
-      # Ajout de la région dans le nom pour permettre le multi-région S3
+      # 👇 Remplacement de 'mbn' par '${TeamPrefix}'
       BucketName: !Sub "s3-projet-m1-infra-cloud-${TeamPrefix}-${AWS::Region}"
-### FIN MODIFICATION ( NOÉ) ###
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
         BlockPublicPolicy: false
@@ -140,14 +136,11 @@ Resources:
             Effect: Allow
             Principal: "*"
             Action: s3:GetObject
-### DEBUT MODIFICATION ( NOÉ) ###
-            # Mise à jour de l'ARN  le nom dynamique du bucket
+            # 👇 Remplacement de 'mbn' par '${TeamPrefix}'
             Resource: !Sub "arn:aws:s3:::s3-projet-m1-infra-cloud-${TeamPrefix}-${AWS::Region}/*"
-### FIN MODIFICATION ( NOÉ) ###
 
 Outputs:
   FrontendURL:
     Description: "L'URL publique de ton site vitrine StreamFlex"
-### DEBUT MODIFICATION ( NOÉ) ###
+    # 👇 Remplacement de 'mbn' par '${TeamPrefix}'
     Value: !Sub "http://s3-projet-m1-infra-cloud-${TeamPrefix}-${AWS::Region}.s3-website-${AWS::Region}.amazonaws.com"
-### FIN MODIFICATION ( NOÉ) ###
