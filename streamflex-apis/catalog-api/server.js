@@ -13,6 +13,16 @@ const TABLE_NAME = process.env.DYNAMODB_TABLE || 'streamflex-catalog-db';
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 
 app.use(express.json());
+app.use((_req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+});
+
+app.options('*', (_req, res) => {
+  res.sendStatus(204);
+});
 
 // Initialiser DynamoDB Document Client
 const client = new DynamoDBClient({ region: AWS_REGION });
