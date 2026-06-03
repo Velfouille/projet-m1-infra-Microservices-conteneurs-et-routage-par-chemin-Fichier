@@ -83,33 +83,33 @@ Resources:
   # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS - MICROSERVICE USER)
   # =========================================================
 
-  # 0.4 Groupe de sous-réseaux pour RDS
-  RDSSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS"
-      SubnetIds:
-        - !Ref PrivateSubnetAZ1
-        - !Ref PrivateSubnetAZ2
+  # # 0.4 Groupe de sous-réseaux pour RDS
+  # RDSSubnetGroup:
+  #   Type: AWS::RDS::DBSubnetGroup
+  #   Properties:
+  #     DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS"
+  #     SubnetIds:
+  #       - !Ref PrivateSubnetAZ1
+  #       - !Ref PrivateSubnetAZ2
 
   # 0.5 Security Group pour RDS (Notre version blindée et stricte)
-  RDSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Acces MySQL strict pour les conteneurs ECS"
-      VpcId: !Ref MainVPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          CidrIp: 10.0.2.0/24 
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          CidrIp: 10.0.3.0/24
-      Tags:
-        - Key: Name
-          Value: !Sub ${ProjectName}-rds-sg
+  # RDSSecurityGroup:
+  #   Type: AWS::EC2::SecurityGroup
+  #   Properties:
+  #     GroupDescription: "Acces MySQL strict pour les conteneurs ECS"
+  #     VpcId: !Ref MainVPC
+  #     SecurityGroupIngress:
+  #       - IpProtocol: tcp
+  #         FromPort: 3306
+  #         ToPort: 3306
+  #         CidrIp: 10.0.2.0/24 
+  #       - IpProtocol: tcp
+  #         FromPort: 3306
+  #         ToPort: 3306
+  #         CidrIp: 10.0.3.0/24
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Sub ${ProjectName}-rds-sg
 
 # 0.6 Instance RDS Active - COMMENTÉE POUR VALIDATION DE L'INFRA
 # UserDatabase:
