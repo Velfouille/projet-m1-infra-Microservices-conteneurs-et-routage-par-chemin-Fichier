@@ -35,7 +35,9 @@ Resources:
       TemplateURL: !Sub "https://${TemplateBucket}.s3.amazonaws.com/streamflex-alb.yaml"
       Parameters:
         ProjectName: !Ref ProjectName
-        NetworkStackName: !Sub "${AWS::StackName}-NetworkStack"
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PublicSubnet1: !GetAtt NetworkStack.Outputs.PublicSubnet1
+        PublicSubnet2: !GetAtt NetworkStack.Outputs.PublicSubnet2
 
   # 3. Couche ECS et Front-End (Dépend de l'ALB)
   ECSStack:
@@ -43,15 +45,15 @@ Resources:
     DependsOn: ALBStack
     Properties:
       TemplateURL: !Sub "https://${TemplateBucket}.s3.amazonaws.com/streamflex-ecs.yaml"
-### DEBUT MODIFICATION ( NOÉ) ###
-      # On passe la variable jusqu'au template ECS
       Parameters:
         ProjectName: !Ref ProjectName
         NbConteneurs: !Ref NbConteneurs
         TeamPrefix: !Ref TeamPrefix
-        NetworkStackName: !Sub "${AWS::StackName}-NetworkStack"
-        ALBStackName: !Sub "${AWS::StackName}-ALBStack"
-### FIN MODIFICATION ( NOÉ) ###
+        PrivateSubnet1: !GetAtt NetworkStack.Outputs.PrivateSubnet1
+        PrivateSubnet2: !GetAtt NetworkStack.Outputs.PrivateSubnet2
+        ECSSecurityGroupId: !GetAtt ALBStack.Outputs.ECSSecurityGroupId
+        CatalogTargetGroupArn: !GetAtt ALBStack.Outputs.CatalogTargetGroupArn
+        UserTargetGroupArn: !GetAtt ALBStack.Outputs.UserTargetGroupArn
 
 Outputs:
   MasterALBUrl:

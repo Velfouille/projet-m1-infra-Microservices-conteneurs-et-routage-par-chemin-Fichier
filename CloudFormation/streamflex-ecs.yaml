@@ -5,17 +5,25 @@ Parameters:
   ProjectName:
     Type: String
     Default: streamflex
-  NetworkStackName:
+  PrivateSubnet1:
     Type: String
-    Default: StreamFlex-Network
-  ALBStackName:
+    Description: Le subnet privé AZ1 depuis la stack réseau
+  PrivateSubnet2:
     Type: String
-    Default: StreamFlex-ALB
+    Description: Le subnet privé AZ2 depuis la stack réseau
+  ECSSecurityGroupId:
+    Type: String
+    Description: L'ID du security group ECS depuis la stack ALB
+  CatalogTargetGroupArn:
+    Type: String
+    Description: L'ARN du target group Catalog depuis la stack ALB
+  UserTargetGroupArn:
+    Type: String
+    Description: L'ARN du target group User depuis la stack ALB
   NbConteneurs:
     Type: Number
     Default: 2
     Description: Mettre à 2 pour la région Active, et 0 pour la région de Secours (Pilot Light)
-  # 👇 AJOUT DU PARAMÈTRE DYNAMIQUE
   TeamPrefix:
     Type: String
     Description: Initiales de l'équipe pour l'unicité des buckets S3
@@ -79,15 +87,14 @@ Resources:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet1"
-            - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet2"
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
           SecurityGroups:
-            - Fn::ImportValue: !Sub "${ProjectName}-${ALBStackName}-ECSSG"
+            - !Ref ECSSecurityGroupId
       LoadBalancers:
         - ContainerName: catalog-app
           ContainerPort: 8080
-          TargetGroupArn:
-            Fn::ImportValue: !Sub "${ProjectName}-${ALBStackName}-CatalogTG"
+          TargetGroupArn: !Ref CatalogTargetGroupArn
 
   UserService:
     Type: AWS::ECS::Service
@@ -101,15 +108,14 @@ Resources:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet1"
-            - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet2"
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
           SecurityGroups:
-            - Fn::ImportValue: !Sub "${ProjectName}-${ALBStackName}-ECSSG"
+            - !Ref ECSSecurityGroupId
       LoadBalancers:
         - ContainerName: user-app
           ContainerPort: 5000
-          TargetGroupArn:
-            Fn::ImportValue: !Sub "${ProjectName}-${ALBStackName}-UserTG"
+          TargetGroupArn: !Ref UserTargetGroupArn
 
   # 4. Hébergement du Front-End (Portail S3)
   FrontendBucket:
