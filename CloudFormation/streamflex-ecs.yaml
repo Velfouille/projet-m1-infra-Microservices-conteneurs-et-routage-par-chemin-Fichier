@@ -55,6 +55,11 @@ Resources:
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
+          Environment:
+            - Name: DYNAMODB_TABLE
+              Value: !Sub "${ProjectName}-catalog-db"
+            - Name: AWS_REGION
+              Value: !Ref "AWS::Region"
 
   UserTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -73,6 +78,11 @@ Resources:
           PortMappings:
             - ContainerPort: 5000
               Protocol: tcp
+          Environment:
+            - Name: DYNAMODB_TABLE
+              Value: !Sub "${ProjectName}-user-db"
+            - Name: AWS_REGION
+              Value: !Ref "AWS::Region"
 
   # 3. Les Services ECS (Maintien en condition opérationnelle)
   CatalogService:
