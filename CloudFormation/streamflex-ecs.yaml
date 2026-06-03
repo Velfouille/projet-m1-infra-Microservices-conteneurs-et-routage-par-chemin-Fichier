@@ -79,15 +79,15 @@ Resources:
         AwsvpcConfiguration:
           AssignPublicIp: DISABLED
           Subnets:
-            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet1"
-            - Fn::ImportValue: !Sub "${NetworkStackName}-PrivateSubnet2"
+            - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet1"
+            - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet2"
           SecurityGroups:
-            - Fn::ImportValue: !Sub "${ALBStackName}-ECSSG"
+            - Fn::ImportValue: !Sub "${ProjectName}-${ALBStackName}-ECSSG"
       LoadBalancers:
         - ContainerName: catalog-app
           ContainerPort: 8080
           TargetGroupArn:
-            Fn::ImportValue: !Sub "${ALBStackName}-CatalogTG"
+            Fn::ImportValue: !Sub "${ProjectName}-${ALBStackName}-CatalogTG"
 
   UserService:
     Type: AWS::ECS::Service
@@ -104,12 +104,12 @@ Resources:
             - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet1"
             - Fn::ImportValue: !Sub "${ProjectName}-${NetworkStackName}-PrivateSubnet2"
           SecurityGroups:
-            - Fn::ImportValue: !Sub "${ALBStackName}-ECSSG"
+            - Fn::ImportValue: !Sub "${ProjectName}-${ALBStackName}-ECSSG"
       LoadBalancers:
         - ContainerName: user-app
           ContainerPort: 5000
           TargetGroupArn:
-            Fn::ImportValue: !Sub "${ALBStackName}-UserTG"
+            Fn::ImportValue: !Sub "${ProjectName}-${ALBStackName}-UserTG"
 
   # 4. Hébergement du Front-End (Portail S3)
   FrontendBucket:

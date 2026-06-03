@@ -5,6 +5,10 @@ Parameters:
   TemplateBucket:
     Type: String
     Description: Nom du bucket S3 contenant les templates enfants
+  ProjectName:
+    Type: String
+    Default: streamflex
+    Description: Nom du projet utilisé pour tagger les ressources
 ### DEBUT MODIFICATION ( NOÉ) ###
   # Ajout du paramètre pour gérer le nombre de conteneurs (Active/Passive)
   NbConteneurs:
@@ -29,6 +33,9 @@ Resources:
     DependsOn: NetworkStack
     Properties:
       TemplateURL: !Sub "https://${TemplateBucket}.s3.amazonaws.com/streamflex-alb.yaml"
+      Parameters:
+        ProjectName: !Ref ProjectName
+        NetworkStackName: !Sub "${AWS::StackName}-NetworkStack"
 
   # 3. Couche ECS et Front-End (Dépend de l'ALB)
   ECSStack:
@@ -39,8 +46,11 @@ Resources:
 ### DEBUT MODIFICATION ( NOÉ) ###
       # On passe la variable jusqu'au template ECS
       Parameters:
+        ProjectName: !Ref ProjectName
         NbConteneurs: !Ref NbConteneurs
         TeamPrefix: !Ref TeamPrefix
+        NetworkStackName: !Sub "${AWS::StackName}-NetworkStack"
+        ALBStackName: !Sub "${AWS::StackName}-ALBStack"
 ### FIN MODIFICATION ( NOÉ) ###
 
 Outputs:
