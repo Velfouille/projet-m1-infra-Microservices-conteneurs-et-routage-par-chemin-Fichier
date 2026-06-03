@@ -33,7 +33,7 @@ Resources:
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
 
-  # 0.2 Fonction Lambda de Synchronisation Continue (Travail du collègue)
+  # 0.2 Fonction Lambda de Synchronisation Continue
   SyncCatalogLambda:
     Type: AWS::Lambda::Function
     Condition: IsActiveRegion
@@ -79,53 +79,56 @@ Resources:
       StartingPosition: LATEST
 
 
-  # =========================================================
-  # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS - MICROSERVICE USER)
-  # =========================================================
+#========================================================
+#COUCHE BASE DE DONNÉES RELATIONNELLE (RDS - MICROSERVICE USER)
+#========================================================
 
-  # # 0.4 Groupe de sous-réseaux pour RDS
-  # RDSSubnetGroup:
-  #   Type: AWS::RDS::DBSubnetGroup
-  #   Properties:
-  #     DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS"
-  #     SubnetIds:
-  #       - !Ref PrivateSubnetAZ1
-  #       - !Ref PrivateSubnetAZ2
+  # 0.4 Groupe de sous-réseaux pour RDS
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS"
+      SubnetIds:
+        - !Ref PrivateSubnetAZ1
+        - !Ref PrivateSubnetAZ2
 
   # 0.5 Security Group pour RDS (Notre version blindée et stricte)
-  # RDSSecurityGroup:
-  #   Type: AWS::EC2::SecurityGroup
-  #   Properties:
-  #     GroupDescription: "Acces MySQL strict pour les conteneurs ECS"
-  #     VpcId: !Ref MainVPC
-  #     SecurityGroupIngress:
-  #       - IpProtocol: tcp
-  #         FromPort: 3306
-  #         ToPort: 3306
-  #         CidrIp: 10.0.2.0/24 
-  #       - IpProtocol: tcp
-  #         FromPort: 3306
-  #         ToPort: 3306
-  #         CidrIp: 10.0.3.0/24
-  #     Tags:
-  #       - Key: Name
-  #         Value: !Sub ${ProjectName}-rds-sg
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Acces MySQL strict pour les conteneurs ECS"
+      VpcId: !Ref MainVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.2.0/24 
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.3.0/24
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-rds-sg
 
-# 0.6 Instance RDS Active - COMMENTÉE POUR VALIDATION DE L'INFRA
-# UserDatabase:
-#   Type: AWS::RDS::DBInstance
-#   Condition: IsActiveRegion
-#   DeletionPolicy: Delete
-#   Properties:
-#     AllocatedStorage: 20
-#     DBInstanceClass: db.t2.micro
-#     Engine: mysql
-#     MasterUsername: adminuser
-#     MasterUserPassword: StreamflexPassword123
-#     DBSubnetGroupName: !Ref RDSSubnetGroup
-#     VPCSecurityGroups:
-#       - !Ref RDSSecurityGroup
-#     PubliclyAccessible: false
+# 0.6 Instance RDS Active
+  UserDatabase:
+    Type: AWS::RDS::DBInstance
+    Condition: IsActiveRegion
+    DeletionPolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub "${ProjectName}-user-db-primary"
+      AllocatedStorage: 20
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      EngineVersion: "8.0"
+      MasterUsername: adminuser
+      MasterUserPassword: StreamflexPassword123
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false
+      StorageEncrypted: false
 
 
   # =========================================================
@@ -299,7 +302,7 @@ Outputs:
   VpcId:
     Value: !Ref MainVPC
     Export:
-      Name: !Sub "${ProjectName}-${AWS::StackName}-VpcId" # Devient : streamflex-NomDeLaStack-VpcId
+      Name: !Sub "${ProjectName}-${AWS::StackName}-VpcId"
   PublicSubnet1:
     Value: !Ref PublicSubnetAZ1
     Export:
