@@ -6,9 +6,9 @@ set -e
 REGION_ACTIVE="us-east-1"
 REGION_PASSIVE="us-west-2"
 MASTER_STACK_NAME="StreamFlex-Master"
-TEMPLATE_BUCKET="s3-streamflex-templates-mbn" 
+TEMPLATE_BUCKET="s3-streamflex-templates-mbn-noe" 
 # On garde juste le préfixe du bucket front-end (la région sera ajoutée dynamiquement)
-FRONTEND_BUCKET_BASE="s3-projet-m1-infra-cloud-mbn"
+FRONTEND_BUCKET_BASE="s3-projet-m1-infra-cloud-mbn-noe"
 ### FIN MODIFICATION ( NOÉ) ###
 
 echo "🚀 Démarrage du déploiement Multi-Région StreamFlex..."

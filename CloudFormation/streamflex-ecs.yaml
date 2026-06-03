@@ -11,10 +11,12 @@ Parameters:
   ALBStackName:
     Type: String
     Default: StreamFlex-ALB
+### DEBUT MODIFICATION ( NOÉ) ###
   NbConteneurs:
     Type: Number
     Default: 2
     Description: Mettre à 2 pour la région Active, et 0 pour la région de Secours (Pilot Light)
+### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
   # 1. Le Cluster ECS
@@ -69,7 +71,9 @@ Resources:
       ServiceName: !Sub ${ProjectName}-catalog-svc
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref CatalogTaskDefinition
+### DEBUT MODIFICATION ( NOÉ) ###
       DesiredCount: !Ref NbConteneurs
+### FIN MODIFICATION ( NOÉ) ###
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -91,7 +95,9 @@ Resources:
       ServiceName: !Sub ${ProjectName}-user-svc
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref UserTaskDefinition
+### DEBUT MODIFICATION ( NOÉ) ###
       DesiredCount: !Ref NbConteneurs
+### FIN MODIFICATION ( NOÉ) ###
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -113,7 +119,7 @@ Resources:
     Properties:
 ### DEBUT MODIFICATION ( NOÉ) ###
       # Ajout de la région dans le nom pour permettre le multi-région S3
-      BucketName: !Sub "s3-projet-m1-infra-cloud-mbn-${AWS::Region}"
+      BucketName: !Sub "s3-projet-m1-infra-cloud-mbn-noe-${AWS::Region}"
 ### FIN MODIFICATION ( NOÉ) ###
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
@@ -135,13 +141,13 @@ Resources:
             Principal: "*"
             Action: s3:GetObject
 ### DEBUT MODIFICATION ( NOÉ) ###
-            # Mise à jour de l'ARN  le nom dynamique du bucket
-            Resource: !Sub "arn:aws:s3:::s3-projet-m1-infra-cloud-mbn-${AWS::Region}/*"
+            # Mise à jour de l'ARN pour le nom dynamique du bucket
+            Resource: !Sub "arn:aws:s3:::s3-projet-m1-infra-cloud-mbn-noe-${AWS::Region}/*"
 ### FIN MODIFICATION ( NOÉ) ###
 
 Outputs:
   FrontendURL:
     Description: "L'URL publique de ton site vitrine StreamFlex"
 ### DEBUT MODIFICATION ( NOÉ) ###
-    Value: !Sub "http://s3-projet-m1-infra-cloud-mbn-${AWS::Region}.s3-website-${AWS::Region}.amazonaws.com"
+    Value: !Sub "http://s3-projet-m1-infra-cloud-mbn-noe-${AWS::Region}.s3-website-${AWS::Region}.amazonaws.com"
 ### FIN MODIFICATION ( NOÉ) ###
