@@ -58,6 +58,7 @@ problèmes de droits sur le LabRole
 **Pourquoi le basculement n'est pas auto-bidirectionnel ?**
 
 Pour vraiment auto-re-basculer, il faudrait :
+
 Route53 Health Check → ❌ LabRole ne l'autorise pas
 
 DNS failover → ❌ Impossible en lab
