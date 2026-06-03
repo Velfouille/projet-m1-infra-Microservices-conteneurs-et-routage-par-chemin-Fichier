@@ -78,6 +78,103 @@ Resources:
       FunctionName: !Ref SyncCatalogLambda
       StartingPosition: LATEST
 
+  # 0.3b Base de données DynamoDB pour USER (Alternative à RDS)
+  UserDatabase:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-user-db"
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
+  # 0.3c Lambda pour gérer les utilisateurs (Endpoint /user)
+  UserManagementLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-user-api"
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Runtime: python3.9
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Sub "${ProjectName}-user-db"
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['TABLE_NAME'])
+
+          def lambda_handler(event, context):
+              """Gestion des utilisateurs via DynamoDB"""
+              try:
+                  path = event.get('path', '/user')
+                  method = event.get('httpMethod', 'GET')
+                  
+                  # GET /user - Lister tous les utilisateurs
+                  if method == 'GET' and path == '/user':
+                      response = table.scan()
+                      users = response.get('Items', [])
+                      return {
+                          'statusCode': 200,
+                          'body': json.dumps({
+                              'message': 'Utilisateurs récupérés',
+                              'count': len(users),
+                              'users': users
+                          })
+                      }
+                  
+                  # GET /user/:id - Récupérer un utilisateur
+                  if method == 'GET' and '/user/' in path:
+                      user_id = path.split('/')[-1]
+                      response = table.get_item(Key={'userId': user_id})
+                      if 'Item' in response:
+                          return {
+                              'statusCode': 200,
+                              'body': json.dumps(response['Item'])
+                          }
+                      return {
+                          'statusCode': 404,
+                          'body': json.dumps({'error': 'Utilisateur non trouvé'})
+                      }
+                  
+                  # POST /user - Créer un utilisateur
+                  if method == 'POST' and path == '/user':
+                      body = json.loads(event.get('body', '{}'))
+                      user_id = body.get('userId', 'user-' + str(datetime.now().timestamp()))
+                      user_data = {
+                          'userId': user_id,
+                          'name': body.get('name', 'Utilisateur'),
+                          'email': body.get('email', ''),
+                          'createdAt': datetime.now().isoformat()
+                      }
+                      table.put_item(Item=user_data)
+                      return {
+                          'statusCode': 201,
+                          'body': json.dumps({'message': 'Utilisateur créé', 'user': user_data})
+                      }
+                  
+                  return {
+                      'statusCode': 400,
+                      'body': json.dumps({'error': 'Route non supportée'})
+                  }
+                  
+              except Exception as e:
+                  return {
+                      'statusCode': 500,
+                      'body': json.dumps({'error': str(e)})
+                  }
+
 
 #========================================================
 # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS - MICROSERVICE USER)
