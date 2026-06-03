@@ -11,6 +11,9 @@ Parameters:
     Type: Number
     Default: 2
     Description: Mettre à 2 pour la région Active, et 0 pour la région de Secours (Pilot Light)
+  TeamPrefix:
+    Type: String
+    Description: Initiales de l'equipe pour l'unicite des buckets S3
 ### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
@@ -37,6 +40,7 @@ Resources:
       # On passe la variable jusqu'au template ECS
       Parameters:
         NbConteneurs: !Ref NbConteneurs
+        TeamPrefix: !Ref TeamPrefix
 ### FIN MODIFICATION ( NOÉ) ###
 
 Outputs:

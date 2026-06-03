@@ -113,7 +113,7 @@ Resources:
     Properties:
 ### DEBUT MODIFICATION ( NOÉ) ###
       # Ajout de la région dans le nom pour permettre le multi-région S3
-      BucketName: !Sub "s3-projet-m1-infra-cloud-mbn-${AWS::Region}"
+      BucketName: !Sub "s3-projet-m1-infra-cloud-${TeamPrefix}-${AWS::Region}"
 ### FIN MODIFICATION ( NOÉ) ###
       PublicAccessBlockConfiguration:
         BlockPublicAcls: false
@@ -136,12 +136,12 @@ Resources:
             Action: s3:GetObject
 ### DEBUT MODIFICATION ( NOÉ) ###
             # Mise à jour de l'ARN  le nom dynamique du bucket
-            Resource: !Sub "arn:aws:s3:::s3-projet-m1-infra-cloud-mbn-${AWS::Region}/*"
+            Resource: !Sub "arn:aws:s3:::s3-projet-m1-infra-cloud-${TeamPrefix}-${AWS::Region}/*"
 ### FIN MODIFICATION ( NOÉ) ###
 
 Outputs:
   FrontendURL:
     Description: "L'URL publique de ton site vitrine StreamFlex"
 ### DEBUT MODIFICATION ( NOÉ) ###
-    Value: !Sub "http://s3-projet-m1-infra-cloud-mbn-${AWS::Region}.s3-website-${AWS::Region}.amazonaws.com"
+    Value: !Sub "http://s3-projet-m1-infra-cloud-${TeamPrefix}-${AWS::Region}.s3-website-${AWS::Region}.amazonaws.com"
 ### FIN MODIFICATION ( NOÉ) ###

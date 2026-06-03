@@ -47,34 +47,37 @@ Resources:
 #        - Region: us-east-1
 #        - Region: us-west-2
 ### FIN MODIFICATION ( NOÉ) ###
-
 # =========================================================
   # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS - MICROSERVICE USER)
   # =========================================================
 
-  # 0.3 Groupe de sous-réseaux pour RDS (Place la DB dans tes subnets privés)
+  # 0.3 Groupe de sous-réseaux pour RDS
   RDSSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Condition: IsActiveRegion
     Properties:
-      DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS StreamFlex"
+      DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS"
       SubnetIds:
         - !Ref PrivateSubnetAZ1
         - !Ref PrivateSubnetAZ2
 
-  # 0.4 Security Group pour RDS (Le pare-feu de ta base de données)
-  RDSSecurityGroup:
+  # 0.4 Security Group pour RDS (Le pare-feu)
+  DatabaseSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Condition: IsActiveRegion
     Properties:
-      GroupDescription: "Autorise l'acces a MySQL depuis l'interieur du VPC"
+      GroupDescription: "Acces MySQL strict pour les conteneurs ECS"
       VpcId: !Ref MainVPC
       SecurityGroupIngress:
-        # Port MySQL (3306). Si l'image Docker 'user' utilise PostgreSQL, remplace par 5432.
+        # Sécurité maximale : on cible uniquement les blocs des sous-réseaux privés
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
-          CidrIp: 10.0.0.0/16 # Seules les ressources dans le VPC (comme tes conteneurs ECS) peuvent s'y connecter
+          CidrIp: 10.0.2.0/24 
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.3.0/24
       Tags:
         - Key: Name
           Value: !Sub ${ProjectName}-rds-sg
@@ -83,19 +86,17 @@ Resources:
   UserDatabase:
     Type: AWS::RDS::DBInstance
     Condition: IsActiveRegion
+    DeletionPolicy: Delete
     Properties:
-      DBName: streamflexuserdb
-      AllocatedStorage: 20
-      DBInstanceClass: db.t3.micro # Format autorisé par le LabRole
+      AllocatedStorage: "20"
+      DBInstanceClass: db.t2.micro
       Engine: mysql
-      EngineVersion: "8.0"
-      MasterUsername: admin
-      MasterUserPassword: StreamFlexPassword2026! # En production, ceci serait dans AWS Secrets Manager
+      MasterUsername: adminuser
+      MasterUserPassword: StreamflexPassword123
       DBSubnetGroupName: !Ref RDSSubnetGroup
       VPCSecurityGroups:
-        - !Ref RDSSecurityGroup
-      PubliclyAccessible: false # La base est strictement privée
-      SkipFinalSnapshot: true # CRITIQUE : Permet à ton ./destroy.sh de fonctionner sans erreur de sauvegarde
+        - !Ref DatabaseSecurityGroup # Mise à jour de la référence ici
+      PubliclyAccessible: false
 
   # 1. Le VPC Principal
   MainVPC:
