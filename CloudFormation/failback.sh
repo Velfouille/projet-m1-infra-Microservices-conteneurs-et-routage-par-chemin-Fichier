@@ -56,8 +56,10 @@ sed \
   -e "s/{{REGION_NAME}}/$REGION_PASSIVE (SECOURS)/g" \
   ../index.html > index_passive.html
 
-aws s3 cp index_active.html s3://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}/index.html
-aws s3 cp index_passive.html s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}/index.html
+aws s3 cp index_active.html s3://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}/index.html \
+  --cache-control "no-store, no-cache, must-revalidate, max-age=0"
+aws s3 cp index_passive.html s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}/index.html \
+  --cache-control "no-store, no-cache, must-revalidate, max-age=0"
 rm index_active.html index_passive.html
 
 echo "------------------------------------------------------"
