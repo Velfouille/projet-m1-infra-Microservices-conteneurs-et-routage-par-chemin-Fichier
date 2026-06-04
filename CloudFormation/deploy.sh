@@ -43,7 +43,7 @@ aws cloudformation deploy \
   --template-file streamflex-master.yaml \
   --stack-name $MASTER_STACK_NAME \
   --region $REGION_ACTIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 PeerDBHost="" \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
@@ -52,9 +52,27 @@ aws cloudformation deploy \
   --template-file streamflex-master.yaml \
   --stack-name $MASTER_STACK_NAME \
   --region $REGION_PASSIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 PublicRDS=true PeerDBHost="" \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
+
+echo "🔗 Récupération de l'endpoint RDS west pour la replication cross-region..."
+WEST_RDS_ENDPOINT=$(aws cloudformation describe-stacks --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE --query "Stacks[0].Outputs[?OutputKey=='UserDBEndpoint'].OutputValue" --output text)
+echo "   Endpoint west: $WEST_RDS_ENDPOINT"
+
+if [ -n "$WEST_RDS_ENDPOINT" ] && [ "$WEST_RDS_ENDPOINT" != "None" ]; then
+  echo "🔄 Mise à jour de la région ACTIVE avec PeerDBHost=$WEST_RDS_ENDPOINT..."
+  aws cloudformation deploy \
+    --template-file streamflex-master.yaml \
+    --stack-name $MASTER_STACK_NAME \
+    --region $REGION_ACTIVE \
+    --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 PeerDBHost=$WEST_RDS_ENDPOINT \
+    --capabilities CAPABILITY_IAM \
+    --no-fail-on-empty-changeset
+  echo "✅ Replication cross-region User API activee (east -> west)"
+else
+  echo "⚠️  Impossible de recuperer l'endpoint RDS west, replication non activee"
+fi
 
 # Récupération des URLs pour les DEUX régions (on le fait AVANT l'étape 4 maintenant)
 echo "🔍 Récupération des URLs ALB..."

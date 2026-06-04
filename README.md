@@ -9,17 +9,23 @@ L'infrastructure StreamFlex est déployée sur **deux régions AWS** (us-east-1 
 ```
                           us-east-1 (ACTIVE)                         us-west-2 (SECOURS)
    ┌──────────────────────────────────────────┐   ┌──────────────────────────────────────────┐
-   │  S3 Frontend (streamflex-client-east)     │   │  S3 Frontend (streamflex-client-west)     │
+   │  S3 Frontend (bucket public)              │   │  S3 Frontend (bucket public)              │
    │       ↑                                    │   │       ↑                                  │
-   │  ALB (Load Balancer)                       │   │  ALB (Load Balancer)                     │
-   │   ├── /catalog → ECS Fargate × 2          │   │   ├── /catalog → ECS Fargate × 0         │
-   │   └── /user    → ECS Fargate × 2          │   │   └── /user    → ECS Fargate × 0         │
+   │  ┌── ALB ── SG : HTTP(80) 0.0.0.0/0 ──┐  │   │  ┌── ALB ── SG : HTTP(80) 0.0.0.0/0 ──┐  │
+   │  │   ├── /catalog → ECS Fargate × 2    │  │   │  │   ├── /catalog → ECS Fargate × 0    │  │
+   │  │   └── /user    → ECS Fargate × 2    │  │   │  │   └── /user    → ECS Fargate × 0    │  │
+   │  └──── ECS SG : 8080/5000 depuis ALB ──┘  │   │  └──── ECS SG : 8080/5000 depuis ALB ──┘  │
    │         │              │                   │   │         │              │                  │
    │         ▼              ▼                   │   │         ▼              ▼                  │
-   │   DynamoDB Catalog   Aurora MySQL User     │   │   DynamoDB Catalog   Aurora MySQL User    │
-   │   (Stream → Sync Lambda → us-west-2)      │   │   (répliqué depuis east)                  │
+   │   DynamoDB Catalog   ┌─ RDS ──────────┐   │   │   DynamoDB Catalog   ┌─ RDS ──────────┐   │
+   │   (Stream → Sync ─── │ SG : MySQL(3306) │   │   │   (répliqué depuis  │ SG : MySQL(3306) │   │
+   │    Lambda → west)    │ subnets privés   │   │   │   east)             │ subnets privés   │   │
+   │                      └─────────────────┘   │   │                      │ + Public(0.0.0.0 │   │
+   │                                            │   │                      │ /0) rep. cross  │   │
+   │                                            │   │                      └─────────────────┘   │
    └──────────────────────────────────────────┘   └──────────────────────────────────────────┘
-                          │                                                                    │
+                          │   Replication User API (POST/DELETE via PeerDBHost)                  │
+                          │   └── east ECS → NAT → Internet → west RDS (PublicRDS)               │
                           └────────── Route53 Health Check ←→ CloudWatch Alarm ────────────────┘
                                                        ↓
                                                Lambda Auto-Failover
@@ -55,11 +61,25 @@ streamflex-master.yaml       ← Stack maître (orchestre les sous-stacks)
 
 ### Synchronisation multi-région
 
+#### Catalogue (DynamoDB)
+
 Un Stream DynamoDB est activé sur `streamflex-catalog-db` en us-east-1. Une fonction Lambda écoute les événements (INSERT, MODIFY, REMOVE) et réplique les données vers us-west-2 via l'API DynamoDB.
 
 | Table source | Lambda | Destination |
 |---|---|---|
 | `streamflex-catalog-db` | `streamflex-dynamodb-sync-stream` | us-west-2 |
+
+#### Users (Aurora MySQL)
+
+La réplication cross-région des utilisateurs est implémentée au **niveau application** (dual-write) :
+
+1. La région **active** (us-east-1) déploie l'API User avec **2 conteneurs** Fargate
+2. Chaque requête `POST /user` et `DELETE /user/:id` est exécutée sur **les deux régions** :
+   - Écriture locale sur le cluster Aurora MySQL est (via le VPC)
+   - Écriture asynchrone sur le cluster Aurora MySQL west (via le endpoint public)
+3. Les lectures (`GET /user`) utilisent uniquement la base locale pour la cohérence
+
+> ⚠️ **Limitation connue** : Le cluster RDS west est déployé dans des subnets privés. Bien que `PubliclyAccessible=true`, les subnets privés n'ont pas de route directe vers l'Internet Gateway. La réplication cross-région RDS peut donc échouer avec `ETIMEDOUT`. Solution envisagée : utiliser une **Lambda VPC-enabled** en us-west-2 comme proxy d'écriture, invoquée depuis l'API User east via le SDK AWS.
 
 ### Frontend
 
@@ -460,17 +480,165 @@ Le frontend embarque un mécanisme de détection automatique :
 
 ---
 
-## 9. Architecture de sécurité (IAM)
+## 9. Architecture de sécurité
 
-Voir le fichier `etude-iam.md` pour l'étude complète. Résumé des rôles proposés :
+### 9.1 Schéma des flux réseau et Security Groups
 
-| Rôle IAM | Usage |
-|---|---|
-| StreamFlexAdminRole | Administration complète |
-| StreamFlexDevOpsRole | Déploiement et maintenance |
-| StreamFlexFargateCatalogRole | Accès DynamoDB Catalog |
-| StreamFlexFargateUserRole | Accès Aurora MySQL User |
-| StreamFlexFailoverRole | Gestion de la reprise d'activité |
-| CloudFront Access Role | Lecture sécurisée du frontend S3 |
+```
+                           INTERNET
+                              │
+                              ▼
+                     ╔══════════════════╗
+                     ║  ALB Security    ║  ← HTTP (80) depuis 0.0.0.0/0
+                     ║  Group           ║
+                     ╚════╤═════════════╝
+                          │
+               ┌──────────┼──────────┐
+               │  TCP:8080 │ TCP:5000 │
+               ▼          │          ▼
+        ┌──────────────────┼──────────────────┐
+        │     ECS Security Group              │
+        │  (trafic UNIQUEMENT depuis ALB SG)  │
+        └──────┬──────────────────────┬───────┘
+               │                      │
+               ▼                      ▼
+      ┌─────────────────┐   ┌─────────────────┐
+      │  Catalog API     │   │  User API        │
+      │  (ECS Fargate)   │   │  (ECS Fargate)   │
+      │  Port 8080       │   │  Port 5000       │
+      └────────┬─────────┘   └────────┬─────────┘
+               │                      │
+               │              ┌───────┴────────┐
+               │              │ RDS Security   │
+               │              │ Group          │
+               │              │ MySQL (3306)   │
+               │              │ depuis Subnets │
+               │              │ privés (10.0.2 │
+               │              │ .0/24, 10.0.3  │
+               │              │ .0/24)         │
+               │              └───────┬────────┘
+               │                      │
+               ▼                      ▼
+      ┌─────────────────┐   ┌─────────────────┐
+      │  DynamoDB        │   │  Aurora MySQL   │
+      │  Catalog         │   │  User (RDS)     │
+      │  (AWS géré)      │   │  (subnets privés│
+      └─────────────────┘   └─────────────────┘
+```
 
-*Note : En environnement Learner Lab, le seul rôle disponible est `LabRole`. Les déploiements utilisent donc `LabRole` pour l'exécution Fargate.*
+**Légende des flux :**
+- Ligne pleine → trafic autorisé par Security Group
+- ~~Ligne barrée~~ → accès bloqué (ex: Internet → ECS direct)
+
+---
+
+### 9.2 Security Groups détaillés
+
+| Security Group | Ressource protégée | Règles entrantes | Justification |
+|---|---|---|---|
+| **ALBSecurityGroup** | ALB (Load Balancer) | HTTP (80) depuis 0.0.0.0/0 | L'ALB doit être accessible depuis Internet pour exposer les APIs |
+| **ECSSecurityGroup** | Conteneurs ECS Fargate | TCP 8080 depuis ALBSG, TCP 5000 depuis ALBSG | Seul l'ALB peut joindre les conteneurs ; pas d'accès direct depuis Internet |
+| **RDSSecurityGroup** | Cluster Aurora MySQL | MySQL (3306) depuis 10.0.2.0/24 et 10.0.3.0/24 | Seuls les subnets privés (contenant les ECS) peuvent accéder à la base |
+| **PublicRDSAccess** (west only) | Cluster Aurora MySQL west | MySQL (3306) depuis 0.0.0.0/0 | Nécessaire pour la réplication cross-région (l'East ECS → NAT → Internet → West RDS) |
+
+**Aucune règle sortante restrictive n'est définie** (default `Allow All` outbound) car les conteneurs ECS doivent pouvoir :
+- Télécharger les images Docker depuis Docker Hub (443)
+- Écrire les logs dans CloudWatch Logs (443)
+- Interroger DynamoDB (443)
+- Joindre le peer RDS west via Internet (pour la réplication cross-région)
+
+---
+
+### 9.3 Isolation réseau (VPC)
+
+| Couche | Subnets | Accès Internet | Accès direct depuis Internet |
+|---|---|---|---|
+| **ALB** | Publics (10.0.0.0/24, 10.0.1.0/24) | Oui (via IGW) | Oui (port 80) |
+| **ECS Fargate** | Privés (10.0.2.0/24, 10.0.3.0/24) | Sortant via NAT Gateway | Non 🔒 |
+| **Aurora MySQL** | Privés (via DBSubnetGroup) | Non | Non 🔒 |
+| **DynamoDB** | AWS géré (hors VPC) | N/A | Non (accès via API signée) |
+
+Les conteneurs ECS sont déployés dans des **subnets privés** sans IP publique (`AssignPublicIp: DISABLED`). Ils accèdent à Internet via les NAT Gateways pour les mises à jour et appels sortants.
+
+---
+
+### 9.4 Chiffrement
+
+| Ressource | Chiffrement au repos | Chiffrement en transit |
+|---|---|---|
+| Aurora MySQL | Activé par défaut (AES-256) | TLS entre ECS et RDS (MySQL native) |
+| DynamoDB Catalog | Activé par défaut (AWS owned key) | TLS (API AWS signée) |
+| Buckets S3 (frontend) | SSE-S3 (AES-256) | TLS (HTTPS pour upload) |
+| Bucket S3 (templates) | SSE-S3 (AES-256) | TLS (HTTPS) |
+
+Note : Le frontend est servi en HTTP (S3 Static Website), ce qui est volontaire pour simuler un site web public sans HTTPS (projet pédagogique).
+
+---
+
+### 9.5 Gestion des identités et accès (IAM)
+
+En environnement **AWS Learner Lab**, le seul rôle disponible est `LabRole`. Tous les composants (ECS Fargate, Lambda, CloudFormation) utilisent ce rôle.
+
+Dans un environnement de production, les rôles suivants seraient créés (principe du moindre privilège) :
+
+| Rôle IAM proposé | Services accessibles | Justification |
+|---|---|---|
+| `StreamFlexFargateCatalogRole` | DynamoDB (GetItem, PutItem, Query, Scan) | Le service Catalog ne fait que lire/écrire dans DynamoDB |
+| `StreamFlexFargateUserRole` | Aucun service AWS (connexion directe à RDS via TCP) | Le service User se connecte directement à MySQL via le driver |
+| `StreamFlexFailoverRole` | ECS (UpdateService, DescribeServices) | La Lambda de failover ne fait que scaler les services ECS |
+| `StreamFlexAdminRole` | Administrateur CloudFormation + tous les services | Déploiement initial et maintenance |
+
+Règles appliquées actuellement avec `LabRole` :
+- Les tâches Fargate utilisent `ExecutionRoleArn: LabRole` pour puller les images Docker et écrire dans CloudWatch Logs
+- La Lambda de synchronisation DynamoDB utilise `LabRole` avec des permissions étendues
+- La Lambda d'auto-failover utilise `LabRole` pour scaler les services ECS
+
+---
+
+### 9.6 Sécurisation des buckets S3
+
+| Bucket | Politique d'accès | Justification |
+|---|---|---|
+| `s3-streamflex-templates-{prefix}-us-east-1` | Privé (bloqué par défaut) | Contient les templates CloudFormation (infrastructure critique) |
+| `s3-projet-m1-infra-cloud-{prefix}-{region}` | Public (GetObject pour tout le monde) | Simule un site web public accessible sans authentification |
+
+Le bucket frontend est volontairement public (pédagogique). En production, on utiliserait **CloudFront** avec **Origin Access Control (OAC)** pour servir le frontend de manière sécurisée.
+
+---
+
+### 9.7 Auto-failover et sécurité
+
+- Le **Route53 Health Check** vérifie l'ALB east toutes les 30s (HTTP GET /health)
+- La **Lambda d'auto-failover** ne peut que modifier le `desiredCount` des services ECS (permissions limitées)
+- Le topic **SNS** est interne au projet (pas de souscription externe)
+- En cas d'ALARM, la Lambda scale west de 0 à 2 conteneurs ; en cas d'OK, elle scale west de 2 à 0
+
+**Aucune exposition publique** de la Lambda ou du topic SNS.
+
+---
+
+### 9.8 Bonnes pratiques et limitations connues
+
+**Ce qui est sécurisé :**
+- ✅ ECS en subnets privés (pas d'IP publique)
+- ✅ RDS accessible uniquement depuis les subnets privés (ou Internet pour west en cross-region)
+- ✅ L'ALB est le seul point d'entrée public vers les APIs
+- ✅ Chiffrement au repos sur toutes les bases de données
+- ✅ Aucune clé ou secret en clair dans les templates (NoEcho sur les mots de passe)
+- ✅ Le bucket de templates est privé
+
+**Ce qui pourrait être amélioré (hors scope du projet pédagogique) :**
+- ⬜ HTTPS (certificat ACM + TLS sur l'ALB)
+- ⬜ CloudFront + WAF devant l'ALB
+- ⬜ Rôles IAM dédiés (moindre privilège) au lieu de LabRole
+- ⬜ VPC Endpoints (Gateway pour S3, Interface pour DynamoDB/CloudWatch) pour éviter le trafic via Internet
+- ⬜ AWS Shield Advanced (protection DDoS)
+- ⬜ AWS Config pour la conformité continue
+- ⬜ GuardDuty pour la détection d'intrusion
+- ⬜ Règles d'egress restrictives sur les Security Groups
+
+---
+
+### 9.9 Référence : étude IAM complète
+
+Voir le fichier `etude-iam.md` pour l'étude détaillée des rôles IAM, politiques associées et matrice des accès.

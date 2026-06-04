@@ -34,6 +34,10 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Mot de passe master pour le cluster Aurora MySQL User
+  PeerDBHost:
+    Type: String
+    Default: ""
+    Description: Endpoint du cluster RDS peer pour replication cross-region
 
 Resources:
   # 1. Le Cluster ECS
@@ -43,6 +47,13 @@ Resources:
       ClusterName: !Sub ${ProjectName}-cluster
       CapacityProviders:
         - FARGATE
+
+  # CloudWatch Log Group pour les logs des conteneurs
+  UserTaskLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${ProjectName}-user-task"
+      RetentionInDays: 7
 
   # 2. Définitions des Tâches (Le "moule" des conteneurs)
   CatalogTaskDefinition:
@@ -81,7 +92,13 @@ Resources:
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
         - Name: user-app
-          Image: velfouille/streamflex-api:user
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/streamflex-user-api:latest"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub "/ecs/${ProjectName}-user-task"
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: ecs
           PortMappings:
             - ContainerPort: 5000
               Protocol: tcp
@@ -98,8 +115,15 @@ Resources:
               Value: streamflex
             - Name: AWS_REGION
               Value: !Ref "AWS::Region"
+            - Name: PEER_DB_HOST
+              Value: !Ref PeerDBHost
 
   # 3. Les Services ECS (Maintien en condition opérationnelle)
+  # Sécurité réseau :
+  #   - AssignPublicIp: DISABLED → pas d'IP publique, conteneurs isolés
+  #   - Subnets privés → pas d'accès direct depuis Internet
+  #   - ECSSecurityGroup → trafic entrant UNIQUEMENT depuis l'ALB
+  #   - Sortie Internet via NAT Gateway (pour pull Docker, logs, etc.)
   CatalogService:
     Type: AWS::ECS::Service
     Properties:

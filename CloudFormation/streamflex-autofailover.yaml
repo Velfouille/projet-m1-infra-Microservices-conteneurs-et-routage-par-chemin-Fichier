@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Auto-failover : Lambda, SNS, CloudWatch Alarm, Route53 Health Check'
+Description: 'StreamFlex - Auto-failover : Lambda, SNS, CloudWatch Alarm, Route53 Health Check. Securite : Lambda avec permissions min (ECS UpdateService), SNS interne, Health Check HTTP seul.'
 
 Parameters:
   ProjectName:
@@ -34,7 +34,7 @@ Resources:
         Type: HTTP
         FullyQualifiedDomainName: !Ref ALBUrlActive
         Port: 80
-        ResourcePath: /health
+        ResourcePath: /user/health
         RequestInterval: 30
         FailureThreshold: 3
 

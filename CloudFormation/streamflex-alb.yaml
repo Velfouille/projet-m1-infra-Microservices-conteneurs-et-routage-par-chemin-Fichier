@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche 2 : ALB, Target Groups et Security Groups'
+Description: 'StreamFlex - Couche 2 : ALB, Target Groups et Security Groups. Securite : ALB SG (HTTP/80 depuis Internet), ECS SG (8080/5000 depuis ALB only).'
 
 Parameters:
   ProjectName:
@@ -16,37 +16,43 @@ Parameters:
     Description: Le subnet public AZ2 depuis la stack réseau
 
 Resources:
-  # 1. Security Groups (Le moindre privilège)
+  # 1. Security Groups (Principe du moindre privilège)
+  # ALB Security Group : autorise le trafic HTTP depuis Internet (80)
+  # et le forwarde vers les conteneurs ECS via ECSSecurityGroup.
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       VpcId: !Ref VpcId
-      GroupDescription: Autorise le trafic HTTP entrant
+      GroupDescription: "ALB : trafic HTTP entrant depuis Internet (80) vers ECS"
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+          Description: "HTTP public depuis Internet"
       Tags:
         - Key: Name
           Value: !Sub ${ProjectName}-alb-sg
 
+  # ECS Security Group : autorise UNIQUEMENT le trafic provenant de l'ALB
+  # sur les ports applicatifs (8080 Catalog, 5000 User).
+  # Aucun accès direct depuis Internet n'est autorisé.
   ECSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       VpcId: !Ref VpcId
-      GroupDescription: Autorise le trafic depuis ALB
+      GroupDescription: "ECS : trafic entrant depuis ALB (8080 Catalog, 5000 User)"
       SecurityGroupIngress:
-        # Autorise le port 8080 pour le service Catalog
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
           SourceSecurityGroupId: !Ref ALBSecurityGroup
-        # Autorise le port 5000 pour le service User
+          Description: "Trafic Catalog (8080) depuis ALB"
         - IpProtocol: tcp
           FromPort: 5000
           ToPort: 5000
           SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: "Trafic User (5000) depuis ALB"
       Tags:
         - Key: Name
           Value: !Sub ${ProjectName}-ecs-sg

@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (DynamoDB Catalog + RDS Aurora User)'
+Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (DynamoDB Catalog + RDS Aurora User). Securite : RDS SG (MySQL/3306 subnets prives only), DynamoDB chiffre par defaut.'
 
 Parameters:
   ProjectName:
@@ -11,13 +11,22 @@ Parameters:
     NoEcho: true
     Default: StreamflexAdmin123
     Description: Mot de passe master pour le cluster Aurora MySQL User
+  PublicRDS:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Rendre le cluster RDS accessible publiquement (pour replication cross-region)
 
 Conditions:
   IsActiveRegion: !Equals [ !Ref "AWS::Region", "us-east-1" ]
+  MakePublicRDS: !Equals [!Ref PublicRDS, "true"]
 
 Resources:
   # =========================================================
   # COUCHE BASE DE DONNÉES NOSQL (DYNAMODB - CATALOGUE)
+  # Chiffrement au repos : activé par défaut (AWS owned key)
+  # Accès : via API AWS signée (IAM) - pas d'exposition publique
+  # Réplication cross-région : DynamoDB Stream + Lambda
   # =========================================================
 
   CatalogDatabase:
@@ -246,6 +255,11 @@ Resources:
 
   # =========================================================
   # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS AURORA - MICROSERVICE USER)
+  # - Chiffrement au repos : activé par défaut sur Aurora (AES-256)
+  # - Accès : restreint aux subnets privés (10.0.2.0/24, 10.0.3.0/24)
+  # - West region uniquement : PublicRDS=true ouvre le port 3306 à 0.0.0.0/0
+  #   pour permettre la réplication cross-région depuis east ECS via NAT
+  # - Mot de passe : transmis en paramètre NoEcho (masqué dans les logs)
   # =========================================================
 
   RDSSubnetGroup:
@@ -260,13 +274,30 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     DependsOn: MainVPC
     Properties:
-      GroupDescription: "Acces MySQL depuis les conteneurs ECS"
+      GroupDescription: "Acces MySQL (3306) depuis les conteneurs ECS (subnets prives)"
       VpcId: !Ref MainVPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
-          CidrIp: 10.0.0.0/16
+          CidrIp: 10.0.2.0/24
+          Description: "Trafic MySQL depuis PrivateSubnetAZ1"
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.3.0/24
+          Description: "Trafic MySQL depuis PrivateSubnetAZ2"
+
+  PublicRDSAccess:
+    Condition: MakePublicRDS
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      CidrIp: 0.0.0.0/0
+      Description: "Acces public MySQL pour replication cross-region (west only)"
 
   UserDBCluster:
     Type: AWS::RDS::DBCluster
@@ -291,7 +322,11 @@ Resources:
       DBClusterIdentifier: !Ref UserDBCluster
       DBInstanceClass: db.t3.medium
       DBInstanceIdentifier: !Sub "${ProjectName}-user-instance"
-      PubliclyAccessible: false
+      PubliclyAccessible:
+        Fn::If:
+          - MakePublicRDS
+          - true
+          - false
       CopyTagsToSnapshot: true
 
 Outputs:
