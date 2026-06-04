@@ -27,7 +27,12 @@
           - Mathias : abandon de la base RDS pour le /user et mise en place de DynamoDB
 
 04/06 :   
-         - Mathias et Noe : création des script de failover et de failback
+         - Mathias et Noe : création des scripts de failover et de failback
          - Mathias : mise a jour de la doc README.md
-         - Mathias : Creation de la doc-techno.md
+         - Mathias : création de la doc-techno.md
+         - Mathias, Bastien & Noe : validation des scripts failover/failback
+         - Mathias, Bastien & Noe : synchronisation cross-région DynamoDB opérationnelle et testée
+         - Mathias : nettoyage du projet (suppression code mort RDS, harmonisation)
+         - Mathias : mise à jour etude-iam.md (correction UserRole)
+         - Mathias, Bastien & Noe : version finale fonctionnelle validée
          
