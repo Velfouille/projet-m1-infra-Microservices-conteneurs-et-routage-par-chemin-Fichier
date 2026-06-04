@@ -303,7 +303,7 @@ IAM Access Analyzer permet :
 | StreamFlexAdminRole | Administration complète de l'infrastructure |
 | StreamFlexDevOpsRole | Déploiement et maintenance |
 | StreamFlexFargateCatalogRole | Accès DynamoDB Catalog |
-| StreamFlexFargateUserRole | Accès RDS et Secrets Manager |
+| StreamFlexFargateUserRole | Accès DynamoDB User |
 | StreamFlexFailoverRole | Gestion de la reprise d'activité |
 | CloudFront Access Role | Lecture sécurisée du frontend S3 |
 

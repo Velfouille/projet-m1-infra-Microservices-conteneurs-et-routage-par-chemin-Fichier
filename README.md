@@ -39,7 +39,7 @@ Un Stream DynamoDB est activé sur `streamflex-catalog-db` et `streamflex-user-d
 Le portail StreamFlex est un site statique hébergé sur S3. Il contient un script JavaScript qui :
 - Teste la santé de l'API active au chargement
 - Bascule automatiquement les URLs des boutons vers la région de secours si nécessaire
-- Période la région active toutes les 30 secondes pour détecter le retour à la normale
+- Interroge la région active toutes les 30 secondes pour détecter le retour à la normale
 
 ---
 
@@ -302,7 +302,7 @@ Voir le fichier `etude-iam.md` pour l'étude complète. Résumé des rôles prop
 | StreamFlexAdminRole | Administration complète |
 | StreamFlexDevOpsRole | Déploiement et maintenance |
 | StreamFlexFargateCatalogRole | Accès DynamoDB Catalog |
-| StreamFlexFargateUserRole | Accès RDS et Secrets Manager |
+| StreamFlexFargateUserRole | Accès DynamoDB User |
 | StreamFlexFailoverRole | Gestion de la reprise d'activité |
 | CloudFront Access Role | Lecture sécurisée du frontend S3 |
 
