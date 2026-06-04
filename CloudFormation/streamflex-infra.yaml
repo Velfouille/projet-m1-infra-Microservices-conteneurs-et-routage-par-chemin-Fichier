@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (Sync Continue DynamoDB Streams & RDS)'
+Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (Sync Continue DynamoDB Streams)'
 
 Parameters:
   ProjectName:
@@ -10,7 +10,6 @@ Parameters:
 # Condition pour s'assurer de déployer les bonnes ressources dans les bonnes régions
 Conditions:
   IsActiveRegion: !Equals [ !Ref "AWS::Region", "us-east-1" ]
-  IsPassiveRegion: !Equals [ !Ref "AWS::Region", "us-west-2" ]
 
 Resources:
   # =========================================================
@@ -122,7 +121,7 @@ Resources:
       FunctionName: !Ref SyncUserLambda
       StartingPosition: LATEST
 
-  # 0.3b Base de données DynamoDB pour USER (Alternative à RDS)
+  # 0.3b Base de données DynamoDB pour USER (RDS initialement prévu mais non disponible en Learner Lab)
   UserDatabase:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -136,88 +135,6 @@ Resources:
       BillingMode: PAY_PER_REQUEST
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
-
-  # 0.3c Lambda pour gérer les utilisateurs (Endpoint /user)
-  UserManagementLambda:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Sub "${ProjectName}-user-api"
-      Handler: index.lambda_handler
-      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
-      Runtime: python3.9
-      Timeout: 30
-      Environment:
-        Variables:
-          TABLE_NAME: !Sub "${ProjectName}-user-db"
-      Code:
-        ZipFile: |
-          import json
-          import boto3
-          import os
-          from datetime import datetime
-
-          dynamodb = boto3.resource('dynamodb')
-          table = dynamodb.Table(os.environ['TABLE_NAME'])
-
-          def lambda_handler(event, context):
-              """Gestion des utilisateurs via DynamoDB"""
-              try:
-                  path = event.get('path', '/user')
-                  method = event.get('httpMethod', 'GET')
-                  
-                  # GET /user - Lister tous les utilisateurs
-                  if method == 'GET' and path == '/user':
-                      response = table.scan()
-                      users = response.get('Items', [])
-                      return {
-                          'statusCode': 200,
-                          'body': json.dumps({
-                              'message': 'Utilisateurs récupérés',
-                              'count': len(users),
-                              'users': users
-                          })
-                      }
-                  
-                  # GET /user/:id - Récupérer un utilisateur
-                  if method == 'GET' and '/user/' in path:
-                      user_id = path.split('/')[-1]
-                      response = table.get_item(Key={'userId': user_id})
-                      if 'Item' in response:
-                          return {
-                              'statusCode': 200,
-                              'body': json.dumps(response['Item'])
-                          }
-                      return {
-                          'statusCode': 404,
-                          'body': json.dumps({'error': 'Utilisateur non trouvé'})
-                      }
-                  
-                  # POST /user - Créer un utilisateur
-                  if method == 'POST' and path == '/user':
-                      body = json.loads(event.get('body', '{}'))
-                      user_id = body.get('userId', 'user-' + str(datetime.now().timestamp()))
-                      user_data = {
-                          'userId': user_id,
-                          'name': body.get('name', 'Utilisateur'),
-                          'email': body.get('email', ''),
-                          'createdAt': datetime.now().isoformat()
-                      }
-                      table.put_item(Item=user_data)
-                      return {
-                          'statusCode': 201,
-                          'body': json.dumps({'message': 'Utilisateur créé', 'user': user_data})
-                      }
-                  
-                  return {
-                      'statusCode': 400,
-                      'body': json.dumps({'error': 'Route non supportée'})
-                  }
-                  
-              except Exception as e:
-                  return {
-                      'statusCode': 500,
-                      'body': json.dumps({'error': str(e)})
-                  }
 
 
 #========================================================

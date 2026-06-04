@@ -170,7 +170,7 @@ echo "🔥 1/2 : Suppression des Master Stacks (ECS, ALB, RDS, Réseau)..."
 delete_stack_if_exists "$REGION_PASSIVE"
 delete_stack_if_exists "$REGION_ACTIVE"
 
-echo "⏳ Attente de la destruction (cela peut prendre 10 à 15 minutes, surtout à cause de la base RDS)..."
+echo "⏳ Attente de la destruction (cela peut prendre 10 à 15 minutes)..."
 DELETE_FAILED=0
 wait_stack_delete "$REGION_PASSIVE" || DELETE_FAILED=1
 wait_stack_delete "$REGION_ACTIVE" || DELETE_FAILED=1
