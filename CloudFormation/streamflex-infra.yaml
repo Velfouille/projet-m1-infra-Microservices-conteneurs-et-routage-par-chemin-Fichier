@@ -12,7 +12,6 @@ Parameters:
     Default: StreamflexAdmin123
     Description: Mot de passe master pour le cluster Aurora MySQL User
 
-# Condition pour s'assurer de déployer les bonnes ressources dans les bonnes régions
 Conditions:
   IsActiveRegion: !Equals [ !Ref "AWS::Region", "us-east-1" ]
 
@@ -20,8 +19,7 @@ Resources:
   # =========================================================
   # COUCHE BASE DE DONNÉES NOSQL (DYNAMODB - CATALOGUE)
   # =========================================================
-  
-  # 0.1 Base de données DynamoDB (Créée dans les deux régions)
+
   CatalogDatabase:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -33,18 +31,16 @@ Resources:
         - AttributeName: id
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
-      # Activation de DynamoDB Streams pour capturer chaque modification
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
 
-  # 0.2 Fonction Lambda de Synchronisation Continue
   SyncCatalogLambda:
     Type: AWS::Lambda::Function
     Condition: IsActiveRegion
     Properties:
       FunctionName: !Sub "${ProjectName}-dynamodb-sync-stream"
       Handler: index.lambda_handler
-      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole" 
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       Runtime: python3.9
       Timeout: 30
       Environment:
@@ -70,10 +66,9 @@ Resources:
                           keys = record['dynamodb']['Keys']
                           dynamo_dest.delete_item(TableName=table_name, Key=keys)
                   except Exception as e:
-                      print(f"Erreur lors de la réplication : {str(e)}")
-              return {"status": 200, "message": "Synchronisation continue terminée"}
+                      print(f"Erreur lors de la replication : {str(e)}")
+              return {"status": 200, "message": "Synchronisation continue terminee"}
 
-  # 0.3 Le lien (Trigger) entre le Stream DynamoDB et la Lambda
   DynamoDBStreamToLambda:
     Type: AWS::Lambda::EventSourceMapping
     Condition: IsActiveRegion
@@ -81,57 +76,6 @@ Resources:
       EventSourceArn: !GetAtt CatalogDatabase.StreamArn
       FunctionName: !Ref SyncCatalogLambda
       StartingPosition: LATEST
-
-  # =========================================================
-  # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS AURORA - MICROSERVICE USER)
-  # =========================================================
-
-  # 0.4 Groupe de sous-réseaux pour RDS
-  RDSSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: "Subnets privés pour le cluster Aurora"
-      SubnetIds:
-        - !Ref PrivateSubnetAZ1
-        - !Ref PrivateSubnetAZ2
-
-  # 0.5 Security Group pour RDS (port MySQL depuis les subnets privés)
-  RDSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: "Accès MySQL depuis les conteneurs ECS"
-      VpcId: !Ref MainVPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          CidrIp: 10.0.0.0/16
-
-  # 0.6 Cluster Aurora MySQL provisionné (instance par région)
-  UserDBCluster:
-    Type: AWS::RDS::DBCluster
-    Properties:
-      Engine: aurora-mysql
-      EngineVersion: "8.0.mysql_aurora.3.04.0"
-      DBClusterIdentifier: !Sub "${ProjectName}-user-cluster"
-      MasterUsername: admin
-      MasterUserPassword: !Ref RDSMasterPassword
-      DBSubnetGroupName: !Ref RDSSubnetGroup
-      VpcSecurityGroupIds:
-        - !Ref RDSSecurityGroup
-      BackupRetentionPeriod: 1
-      DeletionProtection: false
-
-  # 0.7 Instance provisionnée dans le cluster
-  UserDBInstance:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      Engine: aurora-mysql
-      DBClusterIdentifier: !Ref UserDBCluster
-      DBInstanceClass: db.t3.small
-      DBInstanceIdentifier: !Sub "${ProjectName}-user-instance"
-      PubliclyAccessible: false
-
 
   # =========================================================
   # COUCHE RESEAU (VPC)
@@ -165,7 +109,7 @@ Resources:
     Properties:
       VpcId: !Ref MainVPC
       CidrBlock: 10.0.0.0/24
-      AvailabilityZone: !Select [0, !GetAZs ''] 
+      AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -176,7 +120,7 @@ Resources:
     Properties:
       VpcId: !Ref MainVPC
       CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [1, !GetAZs ''] 
+      AvailabilityZone: !Select [1, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -299,6 +243,56 @@ Resources:
     Properties:
       SubnetId: !Ref PrivateSubnetAZ2
       RouteTableId: !Ref PrivateRouteTable2
+
+  # =========================================================
+  # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS AURORA - MICROSERVICE USER)
+  # =========================================================
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnets prives pour le cluster Aurora"
+      SubnetIds:
+        - !Ref PrivateSubnetAZ1
+        - !Ref PrivateSubnetAZ2
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: MainVPC
+    Properties:
+      GroupDescription: "Acces MySQL depuis les conteneurs ECS"
+      VpcId: !Ref MainVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+
+  UserDBCluster:
+    Type: AWS::RDS::DBCluster
+    DependsOn: RDSSecurityGroup
+    Properties:
+      Engine: aurora-mysql
+      EngineVersion: "8.0.mysql_aurora.3.04.0"
+      DBClusterIdentifier: !Sub "${ProjectName}-user-cluster"
+      MasterUsername: admin
+      MasterUserPassword: !Ref RDSMasterPassword
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref RDSSecurityGroup
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+
+  UserDBInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn: UserDBCluster
+    Properties:
+      Engine: aurora-mysql
+      DBClusterIdentifier: !Ref UserDBCluster
+      DBInstanceClass: db.t3.medium
+      DBInstanceIdentifier: !Sub "${ProjectName}-user-instance"
+      PubliclyAccessible: false
+      CopyTagsToSnapshot: true
 
 Outputs:
   VpcId:

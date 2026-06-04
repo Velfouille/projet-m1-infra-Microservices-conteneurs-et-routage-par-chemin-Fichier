@@ -4,19 +4,44 @@
 
 ### Architecture globale
 
-![Architecture globale](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/main/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png)
+L'infrastructure StreamFlex est déployée sur **deux régions AWS** (us-east-1 active, us-west-2 secours) selon le modèle **Pilot Light** :
 
+```
+                          us-east-1 (ACTIVE)                         us-west-2 (SECOURS)
+   ┌──────────────────────────────────────────┐   ┌──────────────────────────────────────────┐
+   │  S3 Frontend (streamflex-client-east)     │   │  S3 Frontend (streamflex-client-west)     │
+   │       ↑                                    │   │       ↑                                  │
+   │  ALB (Load Balancer)                       │   │  ALB (Load Balancer)                     │
+   │   ├── /catalog → ECS Fargate × 2          │   │   ├── /catalog → ECS Fargate × 0         │
+   │   └── /user    → ECS Fargate × 2          │   │   └── /user    → ECS Fargate × 0         │
+   │         │              │                   │   │         │              │                  │
+   │         ▼              ▼                   │   │         ▼              ▼                  │
+   │   DynamoDB Catalog   Aurora MySQL User     │   │   DynamoDB Catalog   Aurora MySQL User    │
+   │   (Stream → Sync Lambda → us-west-2)      │   │   (répliqué depuis east)                  │
+   └──────────────────────────────────────────┘   └──────────────────────────────────────────┘
+                          │                                                                    │
+                          └────────── Route53 Health Check ←→ CloudWatch Alarm ────────────────┘
+                                                       ↓
+                                               Lambda Auto-Failover
+                                         (scale ECS west: 0→2 en ALARME)
+```
+
+- **us-east-1 (ACTIVE)** : VPC complet, 2 conteneurs Fargate par service, RDS Aurora MySQL, ALB, frontend S3
+- **us-west-2 (SECOURS)** : VPC complet, 0 conteneur (coût minimal), ALB présent, bases de données prêtes, frontend S3
+
+![Architecture globale](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/main/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png)
 
 ### Stacks CloudFormation
 
-Le déploiement est modulaire, avec 5 templates YAML :
+Le déploiement est modulaire, avec **6 templates YAML** :
 
 ```
-streamflex-master.yaml  ← Stack maître (orchestre les sous-stacks)
-├── streamflex-infra.yaml  ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, RDS Aurora)
-├── streamflex-alb.yaml    ← Couche ALB (load balancer, target groups, security groups)
-├── streamflex-ecs.yaml    ← Couche ECS (cluster Fargate, services, frontend S3)
-└── streamflex-route53.yaml ← Couche DNS (health checks, failover automatique)
+streamflex-master.yaml       ← Stack maître (orchestre les sous-stacks)
+├── streamflex-infra.yaml    ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, RDS Aurora)
+├── streamflex-alb.yaml      ← Couche ALB (load balancer, target groups, security groups)
+├── streamflex-ecs.yaml      ← Couche ECS (cluster Fargate, services, frontend S3)
+├── streamflex-route53.yaml  ← Couche DNS (health checks, failover DNS)
+└── streamflex-autofailover.yaml ← Auto-failover (Lambda + SNS + CloudWatch Alarm)
 ```
 
 ### Microservices
@@ -26,7 +51,7 @@ streamflex-master.yaml  ← Stack maître (orchestre les sous-stacks)
 | Catalog API | 8080 | `/catalog` | Node.js / Express | DynamoDB `streamflex-catalog-db` |
 | User API | 5000 | `/user` | Node.js / Express | Aurora MySQL (RDS) `streamflex-user-cluster` |
 
-> **Choix des bases de données :** Le catalogue utilise DynamoDB (données produit clé-valeur, adaptées au NoSQL) tandis que les utilisateurs bénéficient d'Aurora MySQL (données relationnelles structurées). Les deux sont déployés par région : DynamoDB est synchronisé cross-région via Streams + Lambda ; Aurora MySQL est indépendant par région.
+> **Choix des bases de données :** Le catalogue utilise DynamoDB (données produit clé-valeur, adaptées au NoSQL) tandis que les utilisateurs bénéficient d'Aurora MySQL (données relationnelles structurées). Les deux sont déployés dans les deux régions : DynamoDB est synchronisé cross-région via Streams + Lambda ; Aurora MySQL est déployé indépendamment dans chaque région (pas de réplication cross-région — chaque région a son propre cluster pour les users).
 
 ### Synchronisation multi-région
 
@@ -74,13 +99,14 @@ chmod +x deploy.sh
 Le script vous demande vos initiales (ex: `mbn`, `team1`, etc.) puis :
 
 1. Crée un bucket S3 pour stocker les templates (s3-streamflex-templates-{prefix}-us-east-1)
-2. Uploade les 5 templates YAML vers ce bucket
-3. Déploie la stack maître en **us-east-1** avec NbConteneurs=2 (région primaire)
-4. Déploie la stack maître en **us-west-2** avec NbConteneurs=2 (région secondaire)
+2. Uploade les **6 templates YAML** vers ce bucket
+3. Déploie la stack maître en **us-east-1** avec `NbConteneurs=2` (**région active** — conteneurs en marche)
+4. Déploie la stack maître en **us-west-2** avec `NbConteneurs=0` (**région passive** — Pilot Light, coût minimal)
 5. Récupère les URLs des deux ALB
-6. Génère les fichiers `index.html` dynamiques (substitution des variables)
+6. Génère les fichiers `index.html` dynamiques (substitution des variables `{{ALB_URL}}`, `{{ALB_URL_PASSIVE}}`, `{{REGION_NAME}}`)
 7. Uploade le frontend vers les buckets S3 des deux régions
-8. Affiche les URLs finales :
+8. Déploie la stack **StreamFlex-AutoFailover** (Lambda + SNS + CloudWatch Alarm + Route53 Health Check)
+9. Affiche les URLs finales :
 
 ```
 🌍 PORTAIL FRONT-END :
@@ -242,7 +268,112 @@ cd /TP-PROJET/CloudFormation
 
 ---
 
-## 7. Que faire en cas de panne
+## 7. Test du failover et simulation de panne
+
+### 7.1 Test automatique (simulation de panne réelle)
+
+Mettre à 0 les services ECS en us-east-1 pour simuler l'indisponibilité de la région active :
+
+```bash
+aws ecs update-service --cluster streamflex-cluster --service streamflex-catalog-svc --desired-count 0 --region us-east-1
+aws ecs update-service --cluster streamflex-cluster --service streamflex-user-svc --desired-count 0 --region us-east-1
+```
+
+**Ce qui se passe :**
+1. Le Route53 Health Check (toutes les 30s) détecte que l'ALB ne répond plus sur `/health`
+2. Après 3 échecs consécutifs (~90s), la CloudWatch Alarm `streamflex-autofailover-alarm` passe en état **ALARM**
+3. L'alarme notifie le SNS Topic → déclenche la Lambda `streamflex-autofailover`
+4. La Lambda scale les services ECS en **us-west-2** à `desired-count=2`
+
+### 7.2 Surveillance en temps réel
+
+Observer la Lambda d'auto-failover s'exécuter :
+
+```bash
+# Activer le polling des logs Lambda
+aws logs tail /aws/lambda/streamflex-autofailover --follow --region us-east-1
+```
+
+Vérifier que les services passent de 0 à 2 conteneurs en us-west-2 :
+
+```bash
+aws ecs describe-services \
+  --cluster streamflex-cluster \
+  --services streamflex-catalog-svc streamflex-user-svc \
+  --region us-west-2 \
+  --query "services[].{Service:serviceName, Desired:desiredCount, Running:runningCount}"
+```
+
+Vérifier l'état de l'alarme CloudWatch :
+
+```bash
+aws cloudwatch describe-alarms \
+  --alarm-names streamflex-autofailover-alarm \
+  --region us-east-1 \
+  --query "MetricAlarms[].{Name:AlarmName, State:StateValue, Reason:StateReason}"
+```
+
+### 7.3 Vérification du basculement
+
+Tester que l'API répond toujours via la région passive :
+
+```bash
+# Récupérer l'URL ALB passive
+ALB_PASSIVE=$(aws cloudformation describe-stacks \
+  --stack-name StreamFlex-Master \
+  --region us-west-2 \
+  --query "Stacks[0].Outputs[?OutputKey=='MasterALBUrl'].OutputValue" \
+  --output text)
+
+# Tester les endpoints
+curl -s $ALB_PASSIVE/health
+curl -s $ALB_PASSIVE/catalog
+curl -s $ALB_PASSIVE/user
+```
+
+### 7.4 Restauration (failback)
+
+Remettre les services actifs en marche pour simuler le retour à la normale :
+
+```bash
+aws ecs update-service --cluster streamflex-cluster --service streamflex-catalog-svc --desired-count 2 --region us-east-1
+aws ecs update-service --cluster streamflex-cluster --service streamflex-user-svc --desired-count 2 --region us-east-1
+```
+
+**Ce qui se passe :**
+1. Le Route53 Health Check détecte le retour de l'ALB actif
+2. La CloudWatch Alarm passe en état **OK**
+3. La Lambda scale les services west à `desired-count=0` (retour en Pilot Light)
+4. Route53 rebascule le DNS vers l'ALB east
+
+### 7.5 Test manuel (frontend uniquement)
+
+Le script `failover.sh` republie la page frontend S3 pour pointer vers l'ALB de secours :
+
+```bash
+cd /TP-PROJET/CloudFormation
+echo "mathias" | ./failover.sh
+```
+
+Pour revenir à la normale :
+
+```bash
+echo "mathias" | ./failback.sh
+```
+
+### 7.6 Test de la bascule client-side (JS)
+
+Le frontend embarque un mécanisme de détection automatique :
+
+1. Ouvrir le portail frontend et la console navigateur (F12 → Console/Network)
+2. Le JS interroge `/health` sur l'ALB actif toutes les 30s
+3. Bloquer temporairement l'URL ALB active dans le navigateur (ex: via un bloqueur de requêtes ou en coupant la résolution DNS localement)
+4. Observer dans la console le message : *"Basculement actif : Vous êtes sur la région de secours"*
+5. Débloquer la requête → le JS détecte le retour et rebascule automatiquement
+
+---
+
+## 8. Que faire en cas de panne
 
 ### Panne : Le déploiement échoue
 
@@ -329,7 +460,7 @@ cd /TP-PROJET/CloudFormation
 
 ---
 
-## 8. Architecture de sécurité (IAM)
+## 9. Architecture de sécurité (IAM)
 
 Voir le fichier `etude-iam.md` pour l'étude complète. Résumé des rôles proposés :
 
