@@ -11,7 +11,7 @@
 
 Le déploiement est modulaire, avec 4 templates YAML :
 
-<<<<<<< HEAD
+
 ### 3. Réseau & Routage : Application Load Balancer (ALB)
 * **Le choix :** Un ALB public unique couplé à des règles de routage basées sur le chemin (Path-based routing).
 * **Les alternatives écartées :**
@@ -39,9 +39,6 @@ Le déploiement se fait de manière modulaire via la CLI AWS.
 **1. Déploiement de la couche réseau (us-east-1) :**
 ```bash
 aws cloudformation deploy --template-file streamflex-infra.yaml --stack-name StreamFlex-Network --region us-east-1
-<<<<<<< HEAD
-=======
-=======
 ```
 streamflex-master.yaml  ← Stack maître (orchestre les 3 sous-stacks)
 ├── streamflex-infra.yaml  ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, Lambda)
@@ -77,10 +74,8 @@ Le portail StreamFlex est un site statique hébergé sur S3. Il contient un scri
 
 ## 2. Prérequis
 
-<<<<<<< HEAD
+
 problèmes de droits sur le LabRole
->>>>>>> dev
-=======
 - Compte AWS avec accès à us-east-1 et us-west-2
 - AWS CLI installée et configurée
 - Rôle IAM avec permissions suffisantes (EC2, ECS, DynamoDB, S3, Lambda, CloudFormation)
