@@ -4,7 +4,7 @@
 
 ### Architecture globale
 
-![Architecture globale]([https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/main/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/b8741949e0cb5cf3f28c03a933199f4d69e26206/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png))
+![Architecture globale](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/b8741949e0cb5cf3f28c03a933199f4d69e26206/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png)
 
 
 ### Stacks CloudFormation
