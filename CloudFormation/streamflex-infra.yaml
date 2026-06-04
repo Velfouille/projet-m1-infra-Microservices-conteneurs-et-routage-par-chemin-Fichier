@@ -1,11 +1,16 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (Sync Continue DynamoDB Streams)'
+Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (DynamoDB Catalog + RDS Aurora User)'
 
 Parameters:
   ProjectName:
     Type: String
     Default: streamflex
     Description: Nom du projet utilisé pour tagger les ressources
+  RDSMasterPassword:
+    Type: String
+    NoEcho: true
+    Default: StreamflexAdmin123
+    Description: Mot de passe master pour le cluster Aurora MySQL User
 
 # Condition pour s'assurer de déployer les bonnes ressources dans les bonnes régions
 Conditions:
@@ -77,123 +82,55 @@ Resources:
       FunctionName: !Ref SyncCatalogLambda
       StartingPosition: LATEST
 
-  # 0.3a Fonction Lambda de Synchronisation Continue pour USER
-  SyncUserLambda:
-    Type: AWS::Lambda::Function
-    Condition: IsActiveRegion
+  # =========================================================
+  # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS AURORA - MICROSERVICE USER)
+  # =========================================================
+
+  # 0.4 Groupe de sous-réseaux pour RDS
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
     Properties:
-      FunctionName: !Sub "${ProjectName}-dynamodb-sync-user-stream"
-      Handler: index.lambda_handler
-      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
-      Runtime: python3.9
-      Timeout: 30
-      Environment:
-        Variables:
-          TABLE_NAME: !Sub "${ProjectName}-user-db"
-          DEST_REGION: "us-west-2"
-      Code:
-        ZipFile: |
-          import boto3
-          import os
+      DBSubnetGroupDescription: "Subnets privés pour le cluster Aurora"
+      SubnetIds:
+        - !Ref PrivateSubnetAZ1
+        - !Ref PrivateSubnetAZ2
 
-          def lambda_handler(event, context):
-              dest_region = os.environ['DEST_REGION']
-              table_name = os.environ['TABLE_NAME']
-              dynamo_dest = boto3.client('dynamodb', region_name=dest_region)
-              for record in event['Records']:
-                  event_name = record['eventName']
-                  try:
-                      if event_name in ['INSERT', 'MODIFY']:
-                          new_image = record['dynamodb']['NewImage']
-                          dynamo_dest.put_item(TableName=table_name, Item=new_image)
-                      elif event_name == 'REMOVE':
-                          keys = record['dynamodb']['Keys']
-                          dynamo_dest.delete_item(TableName=table_name, Key=keys)
-                  except Exception as e:
-                      print(f"Erreur lors de la replication user : {str(e)}")
-              return {"status": 200, "message": "Synchronisation continue user terminee"}
-
-  UserDynamoDBStreamToLambda:
-    Type: AWS::Lambda::EventSourceMapping
-    Condition: IsActiveRegion
+  # 0.5 Security Group pour RDS (port MySQL depuis les subnets privés)
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      EventSourceArn: !GetAtt UserDatabase.StreamArn
-      FunctionName: !Ref SyncUserLambda
-      StartingPosition: LATEST
+      GroupDescription: "Accès MySQL depuis les conteneurs ECS"
+      VpcId: !Ref MainVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
 
-  # 0.3b Base de données DynamoDB pour USER (RDS initialement prévu mais non disponible en Learner Lab)
-  UserDatabase:
-    Type: AWS::DynamoDB::Table
+  # 0.6 Cluster Aurora MySQL provisionné (instance par région)
+  UserDBCluster:
+    Type: AWS::RDS::DBCluster
     Properties:
-      TableName: !Sub "${ProjectName}-user-db"
-      AttributeDefinitions:
-        - AttributeName: userId
-          AttributeType: S
-      KeySchema:
-        - AttributeName: userId
-          KeyType: HASH
-      BillingMode: PAY_PER_REQUEST
-      StreamSpecification:
-        StreamViewType: NEW_AND_OLD_IMAGES
+      Engine: aurora-mysql
+      EngineVersion: "8.0.mysql_aurora.3.04.0"
+      DBClusterIdentifier: !Sub "${ProjectName}-user-cluster"
+      MasterUsername: admin
+      MasterUserPassword: !Ref RDSMasterPassword
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref RDSSecurityGroup
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
 
-
-#========================================================
-# COUCHE BASE DE DONNÉES RELATIONNELLE (RDS - MICROSERVICE USER)
-# COMMENTÉE : LabRole n'a pas les permissions RDS
-# À décommenter dans un environnement AWS complet
-#========================================================
-
-  # # 0.4 Groupe de sous-réseaux pour RDS
-  # RDSSubnetGroup:
-  #   Type: AWS::RDS::DBSubnetGroup
-  #   Properties:
-  #     DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS"
-  #     SubnetIds:
-  #       - !Ref PrivateSubnetAZ1
-  #       - !Ref PrivateSubnetAZ2
-
-  # # 0.5 Security Group pour RDS (Notre version blindée et stricte)
-  # RDSSecurityGroup:
-  #   Type: AWS::EC2::SecurityGroup
-  #   Properties:
-  #     GroupDescription: "Acces MySQL strict pour les conteneurs ECS"
-  #     VpcId: !Ref MainVPC
-  #     SecurityGroupIngress:
-  #       - IpProtocol: tcp
-  #         FromPort: 3306
-  #         ToPort: 3306
-  #         CidrIp: 10.0.2.0/24 
-  #       - IpProtocol: tcp
-  #         FromPort: 3306
-  #         ToPort: 3306
-  #         CidrIp: 10.0.3.0/24
-  #     Tags:
-  #       - Key: Name
-  #         Value: !Sub ${ProjectName}-rds-sg
-
-  # # 0.6 Instance RDS Active
-  # UserDatabase:
-  #   Type: AWS::RDS::DBInstance
-  #   Condition: IsActiveRegion
-  #   DeletionPolicy: Delete
-  #   Properties:
-  #     DBInstanceIdentifier: !Sub "${ProjectName}-user-db-primary"
-  #     AllocatedStorage: 20
-  #     DBInstanceClass: db.t2.small
-  #     Engine: mysql
-  #     EngineVersion: "8.0.35"
-  #     MasterUsername: adminuser
-  #     MasterUserPassword: StreamflexPassword123
-  #     DBSubnetGroupName: !Ref RDSSubnetGroup
-  #     VpcSecurityGroupIds:
-  #       - !Ref RDSSecurityGroup
-  #     PubliclyAccessible: false
-  #     StorageEncrypted: false
-  #     MultiAZ: false
-  #     StorageType: gp2
-  #     BackupRetentionPeriod: 7
-  #     PreferredBackupWindow: "03:00-04:00"
-  #     PreferredMaintenanceWindow: "sun:04:00-sun:05:00"
+  # 0.7 Instance provisionnée dans le cluster
+  UserDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: aurora-mysql
+      DBClusterIdentifier: !Ref UserDBCluster
+      DBInstanceClass: db.t3.small
+      DBInstanceIdentifier: !Sub "${ProjectName}-user-instance"
+      PubliclyAccessible: false
 
 
   # =========================================================
@@ -384,3 +321,6 @@ Outputs:
     Value: !Ref PrivateSubnetAZ2
     Export:
       Name: !Sub "${ProjectName}-${AWS::StackName}-PrivateSubnet2"
+  UserDBEndpoint:
+    Description: Endpoint du cluster Aurora MySQL User
+    Value: !GetAtt UserDBCluster.Endpoint.Address

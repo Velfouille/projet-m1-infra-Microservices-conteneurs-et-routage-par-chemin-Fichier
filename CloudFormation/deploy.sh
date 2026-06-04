@@ -34,6 +34,8 @@ aws s3 cp streamflex-infra.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-alb.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-ecs.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-master.yaml s3://$TEMPLATE_BUCKET/
+aws s3 cp streamflex-route53.yaml s3://$TEMPLATE_BUCKET/
+aws s3 cp streamflex-autofailover.yaml s3://$TEMPLATE_BUCKET/
 
 ### DEBUT MODIFICATION ( NOÉ) ###
 echo "🏗️  2/4 : Déploiement de la région ACTIVE ($REGION_ACTIVE)..."
@@ -41,7 +43,7 @@ aws cloudformation deploy \
   --template-file streamflex-master.yaml \
   --stack-name $MASTER_STACK_NAME \
   --region $REGION_ACTIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
@@ -50,7 +52,7 @@ aws cloudformation deploy \
   --template-file streamflex-master.yaml \
   --stack-name $MASTER_STACK_NAME \
   --region $REGION_PASSIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
@@ -74,6 +76,15 @@ aws s3 cp index_passive.html s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}/inde
 # Nettoyage des fichiers temporaires
 rm index_active.html index_passive.html
 
+echo "⚡ 5/4 : Déploiement de l'auto-failover (Route53 + Lambda)..."
+aws cloudformation deploy \
+  --template-file streamflex-autofailover.yaml \
+  --stack-name "StreamFlex-AutoFailover" \
+  --region $REGION_ACTIVE \
+  --parameter-overrides ALBUrlActive=$ALB_URL_ACTIVE \
+  --capabilities CAPABILITY_IAM \
+  --no-fail-on-empty-changeset
+
 echo "------------------------------------------------------"
 echo "🎉 PROJET MULTI-RÉGION TERMINÉ ! Voici tes liens :"
 echo "🌍 PORTAIL FRONT-END :"
@@ -81,6 +92,8 @@ echo " - Principal : http://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}.s3-website-
 echo " - Secours   : http://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}.s3-website-${REGION_PASSIVE}.amazonaws.com"
 echo "⚙️  ALB (APIs) :"
 echo " - Active  : http://$ALB_URL_ACTIVE"
-echo " - Passive : http://$ALB_URL_PASSIVE (Attention, 0 conteneur démarré !)"
+echo " - Passive : http://$ALB_URL_PASSIVE"
+echo "⚡ Auto-failover : Route53 health check + Lambda activés"
+echo "   (Basculement automatique si la région active est injoignable)"
 echo "------------------------------------------------------"
 ### FIN MODIFICATION ( NOÉ) ###

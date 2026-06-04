@@ -1,0 +1,193 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'StreamFlex - Auto-failover : Lambda, SNS, CloudWatch Alarm, Route53 Health Check'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: streamflex
+    Description: Nom du projet utilisé pour tagger les ressources
+  ALBUrlActive:
+    Type: String
+    Description: DNS de l'ALB de la région active (us-east-1)
+  ECSClusterName:
+    Type: String
+    Default: streamflex-cluster
+  CatalogServiceName:
+    Type: String
+    Default: streamflex-catalog-svc
+  UserServiceName:
+    Type: String
+    Default: streamflex-user-svc
+  RegionActive:
+    Type: String
+    Default: us-east-1
+  RegionPassive:
+    Type: String
+    Default: us-west-2
+
+Resources:
+  # 1. Route53 Health Check vers l'ALB actif
+  HealthCheckActive:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Type: HTTP
+        FullyQualifiedDomainName: !Ref ALBUrlActive
+        Port: 80
+        ResourcePath: /health
+        RequestInterval: 30
+        FailureThreshold: 3
+
+  # 2. Topic SNS pour les notifications d'alarme
+  FailoverSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-autofailover-topic"
+
+  # 3. Lambda d'auto-failover
+  AutoFailoverLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-autofailover"
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Runtime: python3.9
+      Timeout: 120
+      Environment:
+        Variables:
+          REGION_ACTIVE: !Ref RegionActive
+          REGION_PASSIVE: !Ref RegionPassive
+          ECS_CLUSTER: !Ref ECSClusterName
+          CATALOG_SERVICE: !Ref CatalogServiceName
+          USER_SERVICE: !Ref UserServiceName
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+          import json
+          import time
+
+          REGION_ACTIVE = os.environ['REGION_ACTIVE']
+          REGION_PASSIVE = os.environ['REGION_PASSIVE']
+          ECS_CLUSTER = os.environ['ECS_CLUSTER']
+          CATALOG_SERVICE = os.environ['CATALOG_SERVICE']
+          USER_SERVICE = os.environ['USER_SERVICE']
+
+          def update_service(region, service, count):
+              ecs = boto3.client('ecs', region_name=region)
+              try:
+                  response = ecs.update_service(
+                      cluster=ECS_CLUSTER,
+                      service=service,
+                      desiredCount=count,
+                  )
+                  current = response['service']['desiredCount']
+                  print(f"{service} en {region} : desiredCount {current} -> {count}")
+              except Exception as e:
+                  print(f"Erreur sur {service} en {region} : {e}")
+
+          def wait_services_stable(region, services, timeout=120):
+              ecs = boto3.client('ecs', region_name=region)
+              deadline = time.time() + timeout
+              while time.time() < deadline:
+                  all_stable = True
+                  response = ecs.describe_services(
+                      cluster=ECS_CLUSTER,
+                      services=services,
+                  )
+                  for svc in response['services']:
+                      running = svc['runningCount']
+                      desired = svc['desiredCount']
+                      if running != desired:
+                          all_stable = False
+                          print(f"  {svc['serviceName']} : {running}/{desired} running")
+                  if all_stable:
+                      print("Tous les services sont stables.")
+                      return True
+                  time.sleep(5)
+              print("Timeout en attendant la stabilite des services.")
+              return False
+
+          def lambda_handler(event, context):
+              print("Evenement recu :", json.dumps(event, default=str))
+
+              alarm_state = None
+
+              # Format SNS CloudWatch
+              for record in event.get('Records', []):
+                  sns = record.get('Sns', {})
+                  message_str = sns.get('Message', '')
+                  try:
+                      message = json.loads(message_str)
+                      alarm_state = message.get('NewStateValue')
+                  except (json.JSONDecodeError, TypeError):
+                      pass
+
+              if not alarm_state:
+                  print("Impossible de determiner l'etat de l'alarme.")
+                  return {"status": 400, "message": "Alarm state not found"}
+
+              print(f"Etat de l'alarme : {alarm_state}")
+
+              services = [CATALOG_SERVICE, USER_SERVICE]
+
+              if alarm_state == 'ALARM':
+                  print("----- FAILOVER : Activation de la region passive -----")
+                  update_service(REGION_PASSIVE, CATALOG_SERVICE, 2)
+                  update_service(REGION_PASSIVE, USER_SERVICE, 2)
+                  wait_services_stable(REGION_PASSIVE, services)
+
+              elif alarm_state == 'OK':
+                  print("----- FAILBACK : Retour region active -----")
+                  update_service(REGION_PASSIVE, CATALOG_SERVICE, 0)
+                  update_service(REGION_PASSIVE, USER_SERVICE, 0)
+                  wait_services_stable(REGION_PASSIVE, services)
+
+              return {"status": 200, "message": f"Failover action completed for state {alarm_state}"}
+
+  # 4. Permission SNS -> Lambda
+  SNSToLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AutoFailoverLambda
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref FailoverSNSTopic
+
+  # 5. Subscription SNS -> Lambda
+  SNSToLambdaSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref FailoverSNSTopic
+      Protocol: lambda
+      Endpoint: !GetAtt AutoFailoverLambda.Arn
+
+  # 6. CloudWatch Alarm sur le Route53 Health Check
+  FailoverAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-autofailover-alarm"
+      AlarmDescription: "Declenche l'auto-failover si la region active est injoignable"
+      Namespace: AWS/Route53
+      MetricName: HealthCheckStatus
+      Dimensions:
+        - Name: HealthCheckId
+          Value: !Ref HealthCheckActive
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref FailoverSNSTopic
+      OKActions:
+        - !Ref FailoverSNSTopic
+
+Outputs:
+  AutoFailoverLambdaArn:
+    Description: ARN de la Lambda d'auto-failover
+    Value: !GetAtt AutoFailoverLambda.Arn
+  FailoverAlarmName:
+    Description: Nom de l'alarme CloudWatch
+    Value: !Ref FailoverAlarm

@@ -44,13 +44,15 @@ Le CDK génère des rôles IAM implicites qui entrent en conflit avec les Permis
 
 ---
 
-## 4. Couche données — DynamoDB + Lambda
+## 4. Couche données — DynamoDB (Catalog) + Aurora MySQL (User)
 
-**Stack :** DynamoDB (mode Pay-Per-Request) pour les deux microservices
+**Stack :** DynamoDB (mode Pay-Per-Request) pour le catalogue, Aurora MySQL provisionné (db.t3.small) pour les utilisateurs, déployés par région.
 
-**Pourquoi pas RDS MySQL ?** Le choix initial prévoyait DynamoDB pour le catalogue (données produit au format clé-valeur, adaptées au NoSQL) et RDS MySQL pour les utilisateurs (données relationnelles structurées). Cependant, le LabRole de l'environnement Learner Lab ne dispose pas des permissions nécessaires pour créer des instances RDS.
+**Pourquoi ce choix hybride ?** Le catalogue stocke des données produit au format clé-valeur (titre, catégorie, description) — parfait pour DynamoDB (NoSQL, sans schéma fixe). Les utilisateurs ont des données relationnelles structurées (userId, username, plan) qui bénéficient des contraintes et requêtes SQL d'Aurora MySQL.
 
-**Choix retenu :** DynamoDB pour les deux services, en mode On-Demand = gratuit au repos. Cette uniformité présente un avantage : la synchronisation cross-région est cohérente et simple via DynamoDB Streams + Lambda pour les deux tables. Le bloc RDS reste présent mais commenté dans `streamflex-infra.yaml` pour référence si le projet était déployé dans un environnement AWS complet.
+**Synchronisation cross-région :** Seul le catalogue est répliqué via DynamoDB Streams + Lambda vers us-west-2. Les données utilisateurs sont indépendantes par région (chaque région a son propre cluster Aurora). En situation de failover, la région de secours possède sa propre base utilisateur.
+
+**Pourquoi pas DynamoDB pour les deux ?** Uniformiser sur DynamoDB aurait simplifié la réplication mais aurait privé le User API des bénéfices du relationnel (jointures, contraintes d'intégrité, transactions ACID).
 
 ---
 
@@ -64,15 +66,15 @@ Le CDK génère des rôles IAM implicites qui entrent en conflit avec les Permis
 
 ---
 
-## 6. Architecture multi-région — Pilot Light
+## 6. Architecture multi-région — Pilot Light + Auto-Failover
 
-**Stack :** us-east-1 (active, NbConteneurs=2), us-west-2 (pilot light, NbConteneurs=0)
+**Stack :** us-east-1 (primaire, NbConteneurs=2), us-west-2 (pilot light, NbConteneurs=0)
 
 **Pourquoi pas une table DynamoDB globale ?** Droits insuffisants sur le LabRole. Solution alternative : DynamoDB Streams + Lambda.
 
-**Pourquoi le failover n'est pas auto-bidirectionnel ?** Route53 Health Check et DNS failover sont bloqués par le LabRole.
+**Comment le failover est automatique ?** Un Route 53 Health Check surveille l'ALB primaire. En cas d'indisponibilité prolongée, une **CloudWatch Alarm** déclenche une **Lambda** qui scale les services ECS de la région secondaire à NbConteneurs=2. Route 53 bascule le DNS automatiquement vers l'ALB west. Quand la région primaire revient, l'alarme repasse en OK, la Lambda scale west à 0, et Route 53 rebascule.
 
-**Choix retenu :** Déploiement manuel via scripts shell (`failover.sh` / `failback.sh`) qui ajustent le nombre de conteneurs et republient le frontend.
+**Choix retenu :** Pilot light côté west (0 conteneur, coût minimal) + Lambda d'auto-failover + Route 53 DNS failover. Le basculement est automatique en ~3-4 minutes. Les scripts `failover.sh` / `failback.sh` sont conservés pour republier le frontend manuellement.
 
 ---
 

@@ -1,0 +1,65 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'StreamFlex - Route 53 Health Checks et DNS Failover'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: streamflex
+  ALBUrlActive:
+    Type: String
+    Description: DNS de l'ALB actif (us-east-1)
+  ALBUrlPassive:
+    Type: String
+    Description: DNS de l'ALB passif (us-west-2)
+  HostedZoneName:
+    Type: String
+    Description: Nom de la hosted zone Route 53 (ex: streamflex.example.com)
+
+Resources:
+  HealthCheckActive:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Type: HTTP
+        FullyQualifiedDomainName: !Ref ALBUrlActive
+        Port: 80
+        ResourcePath: /health
+        RequestInterval: 30
+        FailureThreshold: 3
+
+  HealthCheckPassive:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Type: HTTP
+        FullyQualifiedDomainName: !Ref ALBUrlPassive
+        Port: 80
+        ResourcePath: /health
+        RequestInterval: 30
+        FailureThreshold: 3
+
+  RecordSetActive:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Ref HostedZoneName
+      Name: !Sub "api.${HostedZoneName}"
+      Type: CNAME
+      SetIdentifier: active-region
+      Failover: PRIMARY
+      HealthCheckId: !Ref HealthCheckActive
+      TTL: 60
+      ResourceRecords:
+        - !Ref ALBUrlActive
+
+  RecordSetPassive:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Ref HostedZoneName
+      Name: !Sub "api.${HostedZoneName}"
+      Type: CNAME
+      SetIdentifier: passive-region
+      Failover: SECONDARY
+      HealthCheckId: !Ref HealthCheckPassive
+      TTL: 60
+      ResourceRecords:
+        - !Ref ALBUrlPassive

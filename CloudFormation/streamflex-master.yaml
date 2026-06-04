@@ -18,6 +18,11 @@ Parameters:
   TeamPrefix:
     Type: String
     Description: Initiales de l'equipe pour l'unicite des buckets S3
+  RDSMasterPassword:
+    Type: String
+    NoEcho: true
+    Default: StreamflexAdmin123
+    Description: Mot de passe master pour le cluster Aurora MySQL User
 ### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
@@ -26,6 +31,9 @@ Resources:
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL: !Sub "https://${TemplateBucket}.s3.amazonaws.com/streamflex-infra.yaml"
+      Parameters:
+        ProjectName: !Ref ProjectName
+        RDSMasterPassword: !Ref RDSMasterPassword
 
   # 2. Couche Load Balancer (Dépend du Réseau)
   ALBStack:
@@ -54,6 +62,8 @@ Resources:
         ECSSecurityGroupId: !GetAtt ALBStack.Outputs.ECSSecurityGroupId
         CatalogTargetGroupArn: !GetAtt ALBStack.Outputs.CatalogTargetGroupArn
         UserTargetGroupArn: !GetAtt ALBStack.Outputs.UserTargetGroupArn
+        UserDBEndpoint: !GetAtt NetworkStack.Outputs.UserDBEndpoint
+        RDSMasterPassword: !Ref RDSMasterPassword
 
 Outputs:
   MasterALBUrl:

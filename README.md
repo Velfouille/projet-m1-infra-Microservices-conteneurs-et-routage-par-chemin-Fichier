@@ -9,13 +9,14 @@
 
 ### Stacks CloudFormation
 
-Le déploiement est modulaire, avec 4 templates YAML :
+Le déploiement est modulaire, avec 5 templates YAML :
 
 ```
-streamflex-master.yaml  ← Stack maître (orchestre les 3 sous-stacks)
-├── streamflex-infra.yaml  ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, Lambda)
+streamflex-master.yaml  ← Stack maître (orchestre les sous-stacks)
+├── streamflex-infra.yaml  ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, RDS Aurora)
 ├── streamflex-alb.yaml    ← Couche ALB (load balancer, target groups, security groups)
-└── streamflex-ecs.yaml    ← Couche ECS (cluster Fargate, services, frontend S3)
+├── streamflex-ecs.yaml    ← Couche ECS (cluster Fargate, services, frontend S3)
+└── streamflex-route53.yaml ← Couche DNS (health checks, failover automatique)
 ```
 
 ### Microservices
@@ -23,18 +24,17 @@ streamflex-master.yaml  ← Stack maître (orchestre les 3 sous-stacks)
 | Service | Port | Endpoint | Technologie | Base de données |
 |---|---|---|---|---|
 | Catalog API | 8080 | `/catalog` | Node.js / Express | DynamoDB `streamflex-catalog-db` |
-| User API | 5000 | `/user` | Node.js / Express | DynamoDB `streamflex-user-db` |
+| User API | 5000 | `/user` | Node.js / Express | Aurora MySQL (RDS) `streamflex-user-cluster` |
 
-> **Note sur le choix des bases de données :** Idéalement, le catalogue (données produit clé-valeur) serait resté sur DynamoDB tandis que les utilisateurs (données relationnelles) auraient bénéficié d'une base RDS MySQL. Cependant, l'environnement Learner Lab ne fournit pas les permissions nécessaires à la création d'instances RDS. Les deux microservices utilisent donc DynamoDB, ce qui permet une synchronisation cross-région uniforme via DynamoDB Streams. Le bloc RDS reste présent mais commenté dans `streamflex-infra.yaml` pour référence.
+> **Choix des bases de données :** Le catalogue utilise DynamoDB (données produit clé-valeur, adaptées au NoSQL) tandis que les utilisateurs bénéficient d'Aurora MySQL (données relationnelles structurées). Les deux sont déployés par région : DynamoDB est synchronisé cross-région via Streams + Lambda ; Aurora MySQL est indépendant par région.
 
 ### Synchronisation multi-région
 
-Un Stream DynamoDB est activé sur `streamflex-catalog-db` et `streamflex-user-db` en us-east-1. Deux fonctions Lambda écoutent les événements (INSERT, MODIFY, REMOVE) et répliquent les données vers us-west-2 via l'API DynamoDB.
+Un Stream DynamoDB est activé sur `streamflex-catalog-db` en us-east-1. Une fonction Lambda écoute les événements (INSERT, MODIFY, REMOVE) et réplique les données vers us-west-2 via l'API DynamoDB.
 
 | Table source | Lambda | Destination |
 |---|---|---|
 | `streamflex-catalog-db` | `streamflex-dynamodb-sync-stream` | us-west-2 |
-| `streamflex-user-db` | `streamflex-dynamodb-sync-user-stream` | us-west-2 |
 
 ### Frontend
 
@@ -49,7 +49,7 @@ Le portail StreamFlex est un site statique hébergé sur S3. Il contient un scri
 
 - Compte AWS avec accès à us-east-1 et us-west-2
 - AWS CLI installée et configurée
-- Rôle IAM avec permissions suffisantes (EC2, ECS, DynamoDB, S3, Lambda, CloudFormation)
+- Rôle IAM avec permissions suffisantes (EC2, ECS, DynamoDB, S3, Lambda, RDS Aurora, CloudFormation)
 - Git
 - Docker (optionnel, pour builder les images)
 
@@ -74,9 +74,9 @@ chmod +x deploy.sh
 Le script vous demande vos initiales (ex: `mbn`, `team1`, etc.) puis :
 
 1. Crée un bucket S3 pour stocker les templates (s3-streamflex-templates-{prefix}-us-east-1)
-2. Uploade les 4 templates YAML vers ce bucket
-3. Déploie la stack maître en **us-east-1** avec NbConteneurs=2 (mode actif)
-4. Déploie la stack maître en **us-west-2** avec NbConteneurs=0 (mode pilot light)
+2. Uploade les 5 templates YAML vers ce bucket
+3. Déploie la stack maître en **us-east-1** avec NbConteneurs=2 (région primaire)
+4. Déploie la stack maître en **us-west-2** avec NbConteneurs=2 (région secondaire)
 5. Récupère les URLs des deux ALB
 6. Génère les fichiers `index.html` dynamiques (substitution des variables)
 7. Uploade le frontend vers les buckets S3 des deux régions
@@ -87,8 +87,8 @@ Le script vous demande vos initiales (ex: `mbn`, `team1`, etc.) puis :
    - Principal : http://s3-projet-m1-infra-cloud-{prefix}-us-east-1.s3-website-us-east-1.amazonaws.com
    - Secours   : http://s3-projet-m1-infra-cloud-{prefix}-us-west-2.s3-website-us-west-2.amazonaws.com
 ⚙️  ALB (APIs) :
-   - Active  : http://{alb-dns-us-east-1}
-   - Passive : http://{alb-dns-us-west-2}
+   - Primary  : http://{alb-dns-us-east-1}
+   - Secondary : http://{alb-dns-us-west-2}
 ```
 
 ### Étape 3 : Builder et pusher les images Docker (si modification des APIs)
@@ -125,9 +125,9 @@ curl -X POST http://<alb-url>/user \
 
 ---
 
-## 4. Validation de la synchronisation DynamoDB
+## 4. Validation de la synchronisation DynamoDB (Catalog)
 
-Après déploiement, vérifier que la réplication cross-région fonctionne.
+Après déploiement, vérifier que la réplication cross-région du catalogue fonctionne.
 
 ### 4.1 Insérer des données dans la région active
 
@@ -136,12 +136,6 @@ Après déploiement, vérifier que la réplication cross-région fonctionne.
 aws dynamodb put-item \
   --table-name streamflex-catalog-db \
   --item '{"id":{"S":"v-test"},"title":{"S":"Film test"},"category":{"S":"Action"}}' \
-  --region us-east-1
-
-# Utilisateurs
-aws dynamodb put-item \
-  --table-name streamflex-user-db \
-  --item '{"userId":{"S":"u-test"},"name":{"S":"Test"},"email":{"S":"test@test.com"}}' \
   --region us-east-1
 ```
 
@@ -152,18 +146,24 @@ aws dynamodb get-item \
   --table-name streamflex-catalog-db \
   --key '{"id":{"S":"v-test"}}' \
   --region us-west-2
-
-aws dynamodb get-item \
-  --table-name streamflex-user-db \
-  --key '{"userId":{"S":"u-test"}}' \
-  --region us-west-2
 ```
 
 ### 4.3 Vérifier les logs Lambda
 
 ```bash
 aws logs tail /aws/lambda/streamflex-dynamodb-sync-stream --region us-east-1
-aws logs tail /aws/lambda/streamflex-dynamodb-sync-user-stream --region us-east-1
+```
+
+### 4.4 Tester le User API (Aurora MySQL)
+
+```bash
+# Lister les utilisateurs
+curl http://<alb-url>/user
+
+# Créer un utilisateur
+curl -X POST http://<alb-url>/user \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"u1","username":"alice","plan":"premium"}'
 ```
 
 ---
@@ -192,32 +192,53 @@ Ce script :
 
 ---
 
-## 6. Procédure de basculement (Failover)
+## 6. Basculement automatique (Auto-Failover)
 
-### Bascule vers la région de secours
+### Architecture
+
+Le failover est entièrement automatisé via `streamflex-autofailover.yaml` :
+
+```
+us-east-1 (ACTIVE)  ←→  Route53 Health Check  ←→  CloudWatch Alarm
+  NbConteneurs=2                 ↓  (ALARM/OK)
+                          SNS Topic
+                              ↓
+                      Lambda auto-failover
+                              ↓
+                    us-west-2 (PILOT LIGHT)
+                      NbConteneurs=0 → 2 (failover)
+                      NbConteneurs=2 → 0 (failback)
+```
+
+### Fonctionnement
+
+1. La région primaire (**us-east-1**) tourne en permanence avec **NbConteneurs=2**
+2. La région secondaire (**us-west-2**) est en pilot light avec **NbConteneurs=0** (coût minimal)
+3. Route 53 vérifie la santé de l'ALB primaire via `/health` toutes les 30s
+4. Si l'ALB est injoignable pendant 3 périodes consécutives (~90s), la **CloudWatch Alarm** se déclenche
+5. L'alarme envoie une notification **SNS** → déclenche la **Lambda d'auto-failover**
+6. La Lambda scale les services ECS de west à **NbConteneurs=2**
+7. Route 53 bascule le DNS vers l'ALB west (automatique)
+
+### Retour à la normale (Failback)
+
+Quand la région primaire redevient joignable :
+1. Le Route 53 Health Check redevient vert
+2. La CloudWatch Alarm passe en état **OK**
+3. La Lambda scale les services west à **NbConteneurs=0**
+4. Route 53 rebascule le DNS vers l'ALB east (automatique)
+
+**Aucune intervention manuelle n'est nécessaire.**
+
+### Scripts manuels (optionnels)
+
+Les scripts `failover.sh` et `failback.sh` permettent de **republier le frontend** S3 manuellement :
 
 ```bash
 cd /TP-PROJET/CloudFormation
-./failover.sh
+./failover.sh   # frontend → pointe vers west
+./failback.sh   # frontend → pointe vers east
 ```
-
-Ce script :
-1. Met à jour la stack us-east-1 avec NbConteneurs=0 (arrêt des 4 conteneurs)
-2. Met à jour la stack us-west-2 avec NbConteneurs=2 (4 conteneurs au total : 2 catalog + 2 user)
-3. Récupère l'URL de l'ALB de secours
-4. Republie le frontend sur les deux buckets S3 avec l'ALB de secours comme endpoint principal
-
-### Retour vers la région nominale
-
-```bash
-cd /TP-PROJET/CloudFormation
-./failback.sh
-```
-
-Ce script :
-1. Remet la région active (us-east-1) avec NbConteneurs=2 (4 conteneurs au total : 2 catalog + 2 user)
-2. Remet la région passive (us-west-2) avec NbConteneurs=0 (pilot light, 0 conteneur)
-3. Republie le frontend sur les deux buckets S3 avec l'ALB active comme endpoint principal
 
 ---
 
@@ -279,19 +300,32 @@ Ce script :
    - **Dépendance non résolue** : un ALB supprimé manuellement met la stack en drift
 3. Solution manuelle : supprimer la stack via la console AWS après avoir nettoyé les ressources bloquantes
 
-### Panne : Problème de synchronisation DynamoDB cross-région
+### Panne : Problème de synchronisation DynamoDB cross-région (Catalog)
 
-1. Vérifier que le Stream DynamoDB est bien activé sur les deux tables :
+1. Vérifier que le Stream DynamoDB est bien activé sur la table :
    ```bash
    aws dynamodb describe-table --table-name streamflex-catalog-db --region us-east-1 --query "Table.StreamSpecification"
-   aws dynamodb describe-table --table-name streamflex-user-db --region us-east-1 --query "Table.StreamSpecification"
    ```
-2. Vérifier les logs des Lambda de synchronisation dans CloudWatch :
+2. Vérifier les logs de la Lambda de synchronisation dans CloudWatch :
    ```bash
    aws logs tail /aws/lambda/streamflex-dynamodb-sync-stream --region us-east-1
-   aws logs tail /aws/lambda/streamflex-dynamodb-sync-user-stream --region us-east-1
    ```
 3. Forcer une synchronisation manuelle : insérer une entrée dans la table us-east-1 et vérifier sa présence dans us-west-2 (voir section 4)
+
+### Panne : Connexion RDS Aurora MySQL (User API)
+
+1. Vérifier que le cluster Aurora est bien créé dans la région :
+   ```bash
+   aws rds describe-db-clusters --region us-east-1 --query "DBClusters[?DBClusterIdentifier=='streamflex-user-cluster']"
+   ```
+2. Vérifier les logs du conteneur User :
+   ```bash
+   aws logs tail /ecs/streamflex-user-task --region us-east-1
+   ```
+3. La table `users` est créée automatiquement au démarrage de l'API. Vérifier avec :
+   ```bash
+   curl http://<alb-url>/health
+   ```
 
 ---
 
@@ -304,7 +338,7 @@ Voir le fichier `etude-iam.md` pour l'étude complète. Résumé des rôles prop
 | StreamFlexAdminRole | Administration complète |
 | StreamFlexDevOpsRole | Déploiement et maintenance |
 | StreamFlexFargateCatalogRole | Accès DynamoDB Catalog |
-| StreamFlexFargateUserRole | Accès DynamoDB User |
+| StreamFlexFargateUserRole | Accès Aurora MySQL User |
 | StreamFlexFailoverRole | Gestion de la reprise d'activité |
 | CloudFront Access Role | Lecture sécurisée du frontend S3 |
 

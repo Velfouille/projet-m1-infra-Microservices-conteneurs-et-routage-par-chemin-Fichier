@@ -27,6 +27,13 @@ Parameters:
   TeamPrefix:
     Type: String
     Description: Initiales de l'équipe pour l'unicité des buckets S3
+  UserDBEndpoint:
+    Type: String
+    Description: Endpoint du cluster Aurora MySQL User
+  RDSMasterPassword:
+    Type: String
+    NoEcho: true
+    Description: Mot de passe master pour le cluster Aurora MySQL User
 
 Resources:
   # 1. Le Cluster ECS
@@ -79,8 +86,16 @@ Resources:
             - ContainerPort: 5000
               Protocol: tcp
           Environment:
-            - Name: DYNAMODB_TABLE
-              Value: !Sub "${ProjectName}-user-db"
+            - Name: RDS_HOST
+              Value: !Ref UserDBEndpoint
+            - Name: RDS_PORT
+              Value: "3306"
+            - Name: RDS_USER
+              Value: admin
+            - Name: RDS_PASSWORD
+              Value: !Ref RDSMasterPassword
+            - Name: RDS_DB
+              Value: streamflex
             - Name: AWS_REGION
               Value: !Ref "AWS::Region"
 
