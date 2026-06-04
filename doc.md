@@ -5,44 +5,8 @@
 ### Architecture globale
 
 ```
-                         ┌──────────────────────────────────────────────┐
-                         │           us-east-1 (ACTIVE)                 │
-                         │                                              │
-                         │  ┌─────┐   ┌──────────────────┐             │
-                         │  │ S3  │   │      ALB         │             │
-                         │  │portal│   │ /catalog → :8080 │             │
-                         │  │      │   │   /user  → :5000 │             │
-                         │  └──────┘   └────────┬─────────┘             │
-                         │                      │                       │
-                         │             ┌────────┴────────┐              │
-                         │             │ ECS Fargate      │              │
-                         │         ┌───┤ (2 conteneurs)   ├───┐          │
-                         │         │   └────────┬─────────┘   │          │
-                         │         │            │             │          │
-                         │   ┌─────┴─────┐ ┌────┴──────┐     │          │
-                         │   │ :8080     │ │ :5000     │     │          │
-                         │   │ catalog   │ │ user      │     │          │
-                         │   │ Node.js   │ │ Node.js   │     │          │
-                         │   └─────┬─────┘ └────┬──────┘     │          │
-                         │         │            │             │          │
-                         │   ┌─────┴────────────┴──────┐      │          │
-                         │   │    DynamoDB × 2         │      │          │
-                         │   │  catalog-db / user-db   │      │          │
-                         │   └──────────┬──────────────┘      │          │
-                         │              │ DynamoDB Streams    │          │
-                         │              ▼                     │          │
-                         │   ┌──────────────────┐             │          │
-                         │   │  Lambda sync     │             │          │
-                         │   └──────────────────┘             │          │
-                         └──────────────────────────────────────────────┘
-                                              │
-                                    Réplication DynamoDB
-                                              │
-                         ┌──────────────────────────────────────────────┐
-                         │           us-west-2 (PILOT LIGHT)            │
-                         │   NbConteneurs=0 (désactivé par défaut)     │
-                         │   DynamoDB répliqué depuis us-east-1         │
-                         └──────────────────────────────────────────────┘
+<img width="1788" height="2242" alt="image" src="https://github.com/user-attachments/assets/b802f6c2-b5d1-4470-ba75-d389462b642b" />
+
 ```
 
 ### Stacks CloudFormation
