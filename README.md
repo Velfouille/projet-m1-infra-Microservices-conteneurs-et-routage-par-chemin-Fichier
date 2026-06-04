@@ -44,7 +44,6 @@ streamflex-master.yaml  ← Stack maître (orchestre les 3 sous-stacks)
 ├── streamflex-infra.yaml  ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, Lambda)
 ├── streamflex-alb.yaml    ← Couche ALB (load balancer, target groups, security groups)
 └── streamflex-ecs.yaml    ← Couche ECS (cluster Fargate, services, frontend S3)
->>>>>>> dev
 ```
 
 ### Microservices
