@@ -21,3 +21,9 @@
           - Noé : Etude et mise en place de la réplication de deuxième région
           - Noé & Mathias : Etude des différentes solutions de réplication des BDD DynamoDB et RDS d'une région à une autre
           - Bastien : Etude et création du document etude-iam.md explicant les politiques IAM à intégrer dans le projet
+          - Mathias et Noe : Etude et mise en place de la réplication de deuxième région
+          - Mathias et Bastien : MAJ APIs
+          - Mathias, Bastien et Noe : Troubleshooting de l'infrastructure
+          - Mathias : abandon de la base RDS pour le /user et mise en place de DynamoDB
+
+04/06 :   - Mathias et Noe : création des script de failover et de failback
