@@ -65,6 +65,27 @@ DNS failover → ❌ Impossible en lab
 
 Polling continu → ⚠️ Possible mais cher en requêtes
 
+### Basculement manuel en lab
+
+Le projet ne fait pas de failover DNS global. Le portail S3 est genere avec les URLs des deux ALB, et la region `us-west-2` demarre en mode pilot light avec `NbConteneurs=0`.
+
+Pour tester la reprise sans Route53, ne supprimez pas l'ALB `us-east-1` directement. Simulez plutot l'incident cote service, puis activez la region de secours :
+
+```bash
+cd CloudFormation
+chmod +x failover.sh failback.sh
+./failover.sh
+```
+
+Le script passe `us-west-2` a `NbConteneurs=2` et republie le portail avec l'ALB de secours comme endpoint principal.
+
+Pour revenir au mode nominal :
+
+```bash
+cd CloudFormation
+./failback.sh
+```
+
 **Pourquoi pas RDS ?**
 
 problèmes de droits sur le LabRole
