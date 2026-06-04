@@ -28,7 +28,12 @@ streamflex-master.yaml  ← Stack maître (orchestre les 3 sous-stacks)
 
 ### Synchronisation multi-région
 
-Un Stream DynamoDB est activé sur `streamflex-catalog-db` en us-east-1. Une fonction Lambda écoute les événements (INSERT, MODIFY, REMOVE) et réplique les données vers us-west-2 via l'API DynamoDB.
+Un Stream DynamoDB est activé sur `streamflex-catalog-db` et `streamflex-user-db` en us-east-1. Deux fonctions Lambda écoutent les événements (INSERT, MODIFY, REMOVE) et répliquent les données vers us-west-2 via l'API DynamoDB.
+
+| Table source | Lambda | Destination |
+|---|---|---|
+| `streamflex-catalog-db` | `streamflex-dynamodb-sync-stream` | us-west-2 |
+| `streamflex-user-db` | `streamflex-dynamodb-sync-user-stream` | us-west-2 |
 
 ### Frontend
 
@@ -119,7 +124,50 @@ curl -X POST http://<alb-url>/user \
 
 ---
 
-## 4. Destruction de l'infrastructure
+## 4. Validation de la synchronisation DynamoDB
+
+Après déploiement, vérifier que la réplication cross-région fonctionne.
+
+### 4.1 Insérer des données dans la région active
+
+```bash
+# Catalogue
+aws dynamodb put-item \
+  --table-name streamflex-catalog-db \
+  --item '{"id":{"S":"v-test"},"title":{"S":"Film test"},"category":{"S":"Action"}}' \
+  --region us-east-1
+
+# Utilisateurs
+aws dynamodb put-item \
+  --table-name streamflex-user-db \
+  --item '{"userId":{"S":"u-test"},"name":{"S":"Test"},"email":{"S":"test@test.com"}}' \
+  --region us-east-1
+```
+
+### 4.2 Vérifier la réplication en us-west-2
+
+```bash
+aws dynamodb get-item \
+  --table-name streamflex-catalog-db \
+  --key '{"id":{"S":"v-test"}}' \
+  --region us-west-2
+
+aws dynamodb get-item \
+  --table-name streamflex-user-db \
+  --key '{"userId":{"S":"u-test"}}' \
+  --region us-west-2
+```
+
+### 4.3 Vérifier les logs Lambda
+
+```bash
+aws logs tail /aws/lambda/streamflex-dynamodb-sync-stream --region us-east-1
+aws logs tail /aws/lambda/streamflex-dynamodb-sync-user-stream --region us-east-1
+```
+
+---
+
+## 5. Destruction de l'infrastructure
 
 ```bash
 cd /TP-PROJET/CloudFormation
@@ -143,7 +191,7 @@ Ce script :
 
 ---
 
-## 5. Procédure de basculement (Failover)
+## 6. Procédure de basculement (Failover)
 
 ### Bascule vers la région de secours
 
@@ -172,7 +220,7 @@ Ce script :
 
 ---
 
-## 6. Que faire en cas de panne
+## 7. Que faire en cas de panne
 
 ### Panne : Le déploiement échoue
 
@@ -232,13 +280,21 @@ Ce script :
 
 ### Panne : Problème de synchronisation DynamoDB cross-région
 
-1. Vérifier que le Stream DynamoDB est bien activé sur `streamflex-catalog-db`
-2. Vérifier les logs de la fonction Lambda `streamflex-dynamodb-sync-stream` dans CloudWatch
-3. Forcer une synchronisation manuelle si nécessaire via un script ad-hoc
+1. Vérifier que le Stream DynamoDB est bien activé sur les deux tables :
+   ```bash
+   aws dynamodb describe-table --table-name streamflex-catalog-db --region us-east-1 --query "Table.StreamSpecification"
+   aws dynamodb describe-table --table-name streamflex-user-db --region us-east-1 --query "Table.StreamSpecification"
+   ```
+2. Vérifier les logs des Lambda de synchronisation dans CloudWatch :
+   ```bash
+   aws logs tail /aws/lambda/streamflex-dynamodb-sync-stream --region us-east-1
+   aws logs tail /aws/lambda/streamflex-dynamodb-sync-user-stream --region us-east-1
+   ```
+3. Forcer une synchronisation manuelle : insérer une entrée dans la table us-east-1 et vérifier sa présence dans us-west-2 (voir section 4)
 
 ---
 
-## 7. Architecture de sécurité (IAM)
+## 8. Architecture de sécurité (IAM)
 
 Voir le fichier `etude-iam.md` pour l'étude complète. Résumé des rôles proposés :
 

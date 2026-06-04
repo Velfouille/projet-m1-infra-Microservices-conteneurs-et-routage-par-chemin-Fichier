@@ -78,6 +78,50 @@ Resources:
       FunctionName: !Ref SyncCatalogLambda
       StartingPosition: LATEST
 
+  # 0.3a Fonction Lambda de Synchronisation Continue pour USER
+  SyncUserLambda:
+    Type: AWS::Lambda::Function
+    Condition: IsActiveRegion
+    Properties:
+      FunctionName: !Sub "${ProjectName}-dynamodb-sync-user-stream"
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Runtime: python3.9
+      Timeout: 30
+      Environment:
+        Variables:
+          TABLE_NAME: !Sub "${ProjectName}-user-db"
+          DEST_REGION: "us-west-2"
+      Code:
+        ZipFile: |
+          import boto3
+          import os
+
+          def lambda_handler(event, context):
+              dest_region = os.environ['DEST_REGION']
+              table_name = os.environ['TABLE_NAME']
+              dynamo_dest = boto3.client('dynamodb', region_name=dest_region)
+              for record in event['Records']:
+                  event_name = record['eventName']
+                  try:
+                      if event_name in ['INSERT', 'MODIFY']:
+                          new_image = record['dynamodb']['NewImage']
+                          dynamo_dest.put_item(TableName=table_name, Item=new_image)
+                      elif event_name == 'REMOVE':
+                          keys = record['dynamodb']['Keys']
+                          dynamo_dest.delete_item(TableName=table_name, Key=keys)
+                  except Exception as e:
+                      print(f"Erreur lors de la replication user : {str(e)}")
+              return {"status": 200, "message": "Synchronisation continue user terminee"}
+
+  UserDynamoDBStreamToLambda:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: IsActiveRegion
+    Properties:
+      EventSourceArn: !GetAtt UserDatabase.StreamArn
+      FunctionName: !Ref SyncUserLambda
+      StartingPosition: LATEST
+
   # 0.3b Base de données DynamoDB pour USER (Alternative à RDS)
   UserDatabase:
     Type: AWS::DynamoDB::Table
