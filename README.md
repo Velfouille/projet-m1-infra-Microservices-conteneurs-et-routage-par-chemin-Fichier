@@ -153,9 +153,10 @@ cd /TP-PROJET/CloudFormation
 ```
 
 Ce script :
-1. Met à jour la stack us-west-2 avec NbConteneurs=2 (démarre les services)
-2. Récupère l'URL de l'ALB de secours
-3. Republie le frontend sur les deux buckets S3 avec l'ALB de secours comme endpoint principal
+1. Met à jour la stack us-east-1 avec NbConteneurs=0 (arrêt des 4 conteneurs)
+2. Met à jour la stack us-west-2 avec NbConteneurs=2 (4 conteneurs au total : 2 catalog + 2 user)
+3. Récupère l'URL de l'ALB de secours
+4. Republie le frontend sur les deux buckets S3 avec l'ALB de secours comme endpoint principal
 
 ### Retour vers la région nominale
 
@@ -165,8 +166,8 @@ cd /TP-PROJET/CloudFormation
 ```
 
 Ce script :
-1. Remet la région active (us-east-1) avec NbConteneurs=2
-2. Remet la région passive (us-west-2) avec NbConteneurs=0 (pilot light)
+1. Remet la région active (us-east-1) avec NbConteneurs=2 (4 conteneurs au total : 2 catalog + 2 user)
+2. Remet la région passive (us-west-2) avec NbConteneurs=0 (pilot light, 0 conteneur)
 3. Republie le frontend sur les deux buckets S3 avec l'ALB active comme endpoint principal
 
 ---
