@@ -1,91 +1,253 @@
-# StreamFlex — Architecture Cloud Microservices & Multi-Région
+# Doc — StreamFlex
 
-Ce dépôt contient le code d'Infrastructure as Code (IaC) permettant de déployer la plateforme de streaming "StreamFlex". L'architecture est conçue pour héberger deux microservices conteneurisés de manière hautement disponible, sécurisée, et résiliente.
+## 1. Fonctionnement du projet
 
-L'infrastructure est pensée pour être **éphémère** : elle peut être déployée en quelques minutes pour des démonstrations ou des tests de reprise sur sinistre (Disaster Recovery) entre les régions `us-east-1` et `us-west-2`, puis détruite intégralement pour optimiser les coûts.
+### Architecture globale
 
----
 
-## 🏗️ Stack Technologique & Justification des Choix Architecturaux
+![Architecture globale](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/dev/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png)
 
-Le tableau suivant détaille les technologies retenues pour répondre aux exigences de la plateforme, ainsi que l'argumentaire face aux alternatives écartées.
 
-### 1. Infrastructure as Code (IaC) : AWS CloudFormation
-* **Le choix :** CloudFormation (via des templates YAML).
-* **Les alternatives écartées :** * *Terraform :* Nécessite la gestion d'un fichier d'état (`terraform.tfstate`) qui complexifie le déploiement éphémère si l'état n'est pas stocké proprement dans un bucket S3 distant.
-  * *AWS CDK :* Bien que plus concis, le CDK génère des rôles IAM par défaut ("sous le capot") qui peuvent entrer en conflit avec les restrictions strictes (Permission Boundaries) des comptes AWS de type "Learner Lab".
-* **L'argumentaire :** CloudFormation offre une approche purement déclarative et transparente. Il permet de s'assurer qu'aucune ressource cachée ou rôle IAM non autorisé n'est créé à l'insu du développeur, ce qui est crucial dans un environnement aux droits restreints.
+### Stacks CloudFormation
 
-### 2. Orchestration des Conteneurs : Amazon ECS Fargate
-* **Le choix :** Amazon Elastic Container Service (ECS) avec le type de lancement AWS Fargate.
-* **Les alternatives écartées :** * *Amazon EKS (Kubernetes) :* Trop lourd et complexe pour deux microservices simples. Le plan de contrôle (Control Plane) d'EKS est facturé en permanence, ce qui est inadapté à un budget restreint.
-  * *ECS sur instances EC2 :* Oblige à gérer le provisionnement, la mise à jour (patching) et le scaling des machines virtuelles sous-jacentes.
-* **L'argumentaire :** Fargate est une solution 100 % Serverless. Il permet de définir les ressources au strict minimum requis (0.25 vCPU et 512 Mo de RAM par tâche), garantissant une empreinte budgétaire minime tout en déléguant la gestion de la flotte de serveurs à AWS.
+Le déploiement est modulaire, avec 4 templates YAML :
 
-### 3. Réseau & Routage : Application Load Balancer (ALB)
-* **Le choix :** Un ALB public unique couplé à des règles de routage basées sur le chemin (Path-based routing).
-* **Les alternatives écartées :**
-  * *Amazon API Gateway :* Excellent pour les microservices purs, mais ajoute une couche de complexité réseau supplémentaire (nécessite des VPC Links pour atteindre des ressources privées) et un coût à la requête qui peut grimper en cas d'attaque DDoS.
-  * *Network Load Balancer (NLB) :* Opère au niveau 4 (TCP), ne permettant pas de lire les chemins d'URL (`/catalog` ou `/user`).
-* **L'argumentaire :** L'ALB opère au niveau 7 (HTTP/HTTPS) et permet de rediriger intelligemment le trafic vers des *Target Groups* distincts selon l'URL appelée (port 8080 pour le catalogue, port 5000 pour les utilisateurs). Il offre également une intégration native et parfaite avec les Security Groups pour appliquer le principe de moindre privilège.
-
-### 4. Couche Données : DynamoDB & Amazon RDS
-* **Le choix :** Amazon DynamoDB (NoSQL) pour le microservice `/catalog` et Amazon RDS PostgreSQL/MySQL (db.t3.micro) pour le microservice `/user`.
-* **Les alternatives écartées :**
-  * *Amazon Aurora Serverless :* Très performant, mais le coût de démarrage et les restrictions de réplication multi-région sur les comptes à budget limité rendent son utilisation risquée pour des tests.
-* **L'argumentaire :** Le catalogue de vidéos est un cas d'usage parfait pour le NoSQL (requêtes rapides et prévisibles). DynamoDB offre un mode de facturation "à la demande" (On-Demand) totalement gratuit lorsque l'API n'est pas sollicitée. RDS permet de conserver l'intégrité relationnelle pour les profils utilisateurs, tout en respectant les consignes de sécurité (Enhanced Monitoring désactivé).
-
-### 5. Registre d'Images : Amazon ECR Public (ou Docker Hub)
-* **Le choix :** Hébergement des images Docker sur un registre public.
-* **L'alternative écartée :** * *Amazon ECR Privé (avec réplication cross-region) :* La réplication d'un registre privé d'une région à une autre demande des permissions IAM inter-régions souvent bloquées sur les environnements de laboratoire.
-* **L'argumentaire :** Utiliser un registre public garantit que lors du test de basculement d'urgence (Crash-test Région) , le cluster ECS démarré en `us-west-2` pourra puller les images de conteneurs instantanément sans rencontrer d'erreurs "Access Denied" liées aux rôles d'exécution Fargate.
-
----
-
-## 🚀 Déploiement (Procédure de soutenance)
-
-Le déploiement se fait de manière modulaire via la CLI AWS. 
-
-**1. Déploiement de la couche réseau (us-east-1) :**
-```bash
-aws cloudformation deploy --template-file streamflex-infra.yaml --stack-name StreamFlex-Network --region us-east-1
+```
+streamflex-master.yaml  ← Stack maître (orchestre les 3 sous-stacks)
+├── streamflex-infra.yaml  ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, Lambda)
+├── streamflex-alb.yaml    ← Couche ALB (load balancer, target groups, security groups)
+└── streamflex-ecs.yaml    ← Couche ECS (cluster Fargate, services, frontend S3)
 ```
 
-**Pourquoi pas une table global pour dynamodb ?**
+### Microservices
 
-problèmes de droits sur le LabRole
+| Service | Port | Endpoint | Technologie | Base de données |
+|---|---|---|---|---|
+| Catalog API | 8080 | `/catalog` | Node.js / Express | DynamoDB `streamflex-catalog-db` |
+| User API | 5000 | `/user` | Node.js / Express | DynamoDB `streamflex-user-db` |
 
-**Pourquoi le basculement n'est pas auto-bidirectionnel ?**
+### Synchronisation multi-région
 
-Pour vraiment auto-re-basculer, il faudrait :
+Un Stream DynamoDB est activé sur `streamflex-catalog-db` en us-east-1. Une fonction Lambda écoute les événements (INSERT, MODIFY, REMOVE) et réplique les données vers us-west-2 via l'API DynamoDB.
 
-Route53 Health Check → ❌ LabRole ne l'autorise pas
+### Frontend
 
-DNS failover → ❌ Impossible en lab
+Le portail StreamFlex est un site statique hébergé sur S3. Il contient un script JavaScript qui :
+- Teste la santé de l'API active au chargement
+- Bascule automatiquement les URLs des boutons vers la région de secours si nécessaire
+- Période la région active toutes les 30 secondes pour détecter le retour à la normale
 
-Polling continu → ⚠️ Possible mais cher en requêtes
+---
 
-### Basculement manuel en lab
+## 2. Prérequis
 
-Le projet ne fait pas de failover DNS global. Le portail S3 est genere avec les URLs des deux ALB, et la region `us-west-2` demarre en mode pilot light avec `NbConteneurs=0`.
+- Compte AWS avec accès à us-east-1 et us-west-2
+- AWS CLI installée et configurée
+- Rôle IAM avec permissions suffisantes (EC2, ECS, DynamoDB, S3, Lambda, CloudFormation)
+- Git
+- Docker (optionnel, pour builder les images)
 
-Pour tester la reprise sans Route53, ne supprimez pas l'ALB `us-east-1` directement. Simulez plutot l'incident cote service, puis activez la region de secours :
+---
+
+## 3. Déploiement
+
+### Étape 1 : Cloner le dépôt
 
 ```bash
-cd CloudFormation
-chmod +x failover.sh failback.sh
+git clone <url-du-depot> /TP-PROJET
+cd /TP-PROJET/CloudFormation
+```
+
+### Étape 2 : Lancer le déploiement
+
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+Le script vous demande vos initiales (ex: `mbn`, `team1`, etc.) puis :
+
+1. Crée un bucket S3 pour stocker les templates (s3-streamflex-templates-{prefix}-us-east-1)
+2. Uploade les 4 templates YAML vers ce bucket
+3. Déploie la stack maître en **us-east-1** avec NbConteneurs=2 (mode actif)
+4. Déploie la stack maître en **us-west-2** avec NbConteneurs=0 (mode pilot light)
+5. Récupère les URLs des deux ALB
+6. Génère les fichiers `index.html` dynamiques (substitution des variables)
+7. Uploade le frontend vers les buckets S3 des deux régions
+8. Affiche les URLs finales :
+
+```
+🌍 PORTAIL FRONT-END :
+   - Principal : http://s3-projet-m1-infra-cloud-{prefix}-us-east-1.s3-website-us-east-1.amazonaws.com
+   - Secours   : http://s3-projet-m1-infra-cloud-{prefix}-us-west-2.s3-website-us-west-2.amazonaws.com
+⚙️  ALB (APIs) :
+   - Active  : http://{alb-dns-us-east-1}
+   - Passive : http://{alb-dns-us-west-2}
+```
+
+### Étape 3 : Builder et pusher les images Docker (si modification des APIs)
+
+```bash
+cd streamflex-apis/catalog-api
+docker build -t <dockerhub_username>/streamflex-api:catalog .
+docker push <dockerhub_username>/streamflex-api:catalog
+
+cd ../user-api
+docker build -t <dockerhub_username>/streamflex-api:user .
+docker push <dockerhub_username>/streamflex-api:user
+```
+
+Puis mettre à jour l'image dans `streamflex-ecs.yaml` (ligne `Image:` sous `CatalogTaskDefinition` et `UserTaskDefinition`) et relancer `deploy.sh`.
+
+### Étape 4 : Tester
+
+Ouvrir le portail front-end, cliquer sur "Catalogue" ou "Utilisateurs". Utiliser l'API directement :
+
+```bash
+# Catalogue
+curl http://<alb-url>/catalog
+curl -X POST http://<alb-url>/catalog \
+  -H "Content-Type: application/json" \
+  -d '{"id":"v1","title":"Mon film","category":"Action"}'
+
+# Utilisateurs
+curl http://<alb-url>/user
+curl -X POST http://<alb-url>/user \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"u1","username":"alice","plan":"premium"}'
+```
+
+---
+
+## 4. Destruction de l'infrastructure
+
+```bash
+cd /TP-PROJET/CloudFormation
+chmod +x destroy.sh
+./destroy.sh
+```
+
+Ce script :
+
+1. Vide les buckets S3 (nécessaire avant suppression CloudFormation)
+2. Supprime les services et tâches ECS dans les deux régions
+3. Supprime les stacks CloudFormation (master → ECS → ALB → infra) dans les deux régions
+4. Supprime le bucket de templates S3
+
+**Temps estimé :** 10 à 15 minutes (surtout à cause de la suppression RDS si décommenté).
+
+**En cas d'échec :** La stack passe en `DELETE_FAILED`. Le script affiche les événements d'erreur. Vérifier :
+- Un bucket S3 n'a pas été vidé correctement
+- Une ressource a été supprimée manuellement (drift)
+- Des permissions IAM manquent
+
+---
+
+## 5. Procédure de basculement (Failover)
+
+### Bascule vers la région de secours
+
+```bash
+cd /TP-PROJET/CloudFormation
 ./failover.sh
 ```
 
-Le script passe `us-west-2` a `NbConteneurs=2` et republie le portail avec l'ALB de secours comme endpoint principal.
+Ce script :
+1. Met à jour la stack us-west-2 avec NbConteneurs=2 (démarre les services)
+2. Récupère l'URL de l'ALB de secours
+3. Republie le frontend sur les deux buckets S3 avec l'ALB de secours comme endpoint principal
 
-Pour revenir au mode nominal :
+### Retour vers la région nominale
 
 ```bash
-cd CloudFormation
+cd /TP-PROJET/CloudFormation
 ./failback.sh
 ```
 
-**Pourquoi pas RDS ?**
+Ce script :
+1. Remet la région active (us-east-1) avec NbConteneurs=2
+2. Remet la région passive (us-west-2) avec NbConteneurs=0 (pilot light)
+3. Republie le frontend sur les deux buckets S3 avec l'ALB active comme endpoint principal
 
-problèmes de droits sur le LabRole
+---
+
+## 6. Que faire en cas de panne
+
+### Panne : Le déploiement échoue
+
+1. Vérifier les logs CloudFormation :
+   ```bash
+   aws cloudformation describe-stack-events \
+     --stack-name StreamFlex-Master \
+     --region us-east-1 \
+     --query "StackEvents[?contains(ResourceStatus, 'FAILED')]"
+   ```
+2. Causes fréquentes :
+   - **Bucket S3 déjà existant** : choisir un autre préfixe d'équipe
+   - **LabRole insuffisant** : certaines actions peuvent être bloquées (RDS, certaines permissions IAM)
+   - **Limites de compte AWS** : trop de VPCs, trop d'Elastic IPs (max 5 par défaut)
+3. Solution : corriger le problème, puis `./destroy.sh` et `./deploy.sh`
+
+### Panne : Les APIs ne répondent pas
+
+1. Vérifier la santé des services ECS :
+   ```bash
+   aws ecs describe-services \
+     --cluster streamflex-cluster \
+     --services streamflex-catalog-svc streamflex-user-svc \
+     --region us-east-1
+   ```
+2. Vérifier que l'ALB est accessible :
+   ```bash
+   curl http://<alb-url>/health
+   ```
+3. Vérifier les logs CloudWatch :
+   ```bash
+   aws logs describe-log-groups --region us-east-1
+   aws logs tail /ecs/streamflex-catalog-task --region us-east-1
+   ```
+4. Si la région active est injoignable, lancer `./failover.sh`
+
+### Panne : Le frontend S3 ne s'affiche pas
+
+1. Vérifier que le bucket est bien configuré en Static Website Hosting :
+   ```bash
+   aws s3api get-bucket-website \
+     --bucket s3-projet-m1-infra-cloud-{prefix}-{region}
+   ```
+2. Vérifier la politique du bucket (lecture publique)
+3. Accéder directement à l'URL du bucket :
+   ```
+   http://s3-projet-m1-infra-cloud-{prefix}-us-east-1.s3-website-us-east-1.amazonaws.com
+   ```
+
+### Panne : Destruction bloquée (DELETE_FAILED)
+
+1. Identifier la ressource qui bloque via les événements CloudFormation (le script les affiche automatiquement)
+2. Causes possibles :
+   - **Bucket S3 non vide** : le script vide automatiquement les buckets, mais une réécriture concurrente peut interférer
+   - **Dépendance non résolue** : un ALB supprimé manuellement met la stack en drift
+3. Solution manuelle : supprimer la stack via la console AWS après avoir nettoyé les ressources bloquantes
+
+### Panne : Problème de synchronisation DynamoDB cross-région
+
+1. Vérifier que le Stream DynamoDB est bien activé sur `streamflex-catalog-db`
+2. Vérifier les logs de la fonction Lambda `streamflex-dynamodb-sync-stream` dans CloudWatch
+3. Forcer une synchronisation manuelle si nécessaire via un script ad-hoc
+
+---
+
+## 7. Architecture de sécurité (IAM)
+
+Voir le fichier `etude-iam.md` pour l'étude complète. Résumé des rôles proposés :
+
+| Rôle IAM | Usage |
+|---|---|
+| StreamFlexAdminRole | Administration complète |
+| StreamFlexDevOpsRole | Déploiement et maintenance |
+| StreamFlexFargateCatalogRole | Accès DynamoDB Catalog |
+| StreamFlexFargateUserRole | Accès RDS et Secrets Manager |
+| StreamFlexFailoverRole | Gestion de la reprise d'activité |
+| CloudFront Access Role | Lecture sécurisée du frontend S3 |
+
+*Note : En environnement Learner Lab, le seul rôle disponible est `LabRole`. Les déploiements utilisent donc `LabRole` pour l'exécution Fargate.*
