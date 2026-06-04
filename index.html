@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>StreamFlex - Portail {{REGION_NAME}}</title>
     <style>
         /* Thème sombre style plateforme de streaming */
@@ -95,6 +98,14 @@
             border-radius: 4px;
         }
 
+        #api-endpoint {
+            margin-top: 18px;
+            color: #888;
+            font-size: 0.9em;
+            max-width: 90vw;
+            overflow-wrap: anywhere;
+        }
+
         .status-indicator {
             display: inline-block;
             width: 12px;
@@ -141,6 +152,8 @@
         ✅ Région principale restaurée ! Redirection automatique...
     </div>
 
+    <div id="api-endpoint"></div>
+
     <div class="footer">
         Démonstration technique - Projet Infrastructure Cloud <br>
         Région actuelle : <span class="badge">{{REGION_NAME}}</span>
@@ -153,10 +166,23 @@
 
         const failoverStatus = document.getElementById('failover-status');
         const recoveryStatus = document.getElementById('recovery-status');
+        const apiEndpoint = document.getElementById('api-endpoint');
         const buttons = document.querySelectorAll('.btn');
 
         let isFailedOver = false;
         let pollingInterval = null;
+
+        function setButtonTargets(apiUrl) {
+            buttons.forEach(btn => {
+                const href = btn.getAttribute('href');
+                if (href.includes('/catalog')) {
+                    btn.href = apiUrl + "/catalog";
+                } else if (href.includes('/user')) {
+                    btn.href = apiUrl + "/user";
+                }
+            });
+            apiEndpoint.textContent = "API cible : " + apiUrl;
+        }
 
         /**
          * Teste la disponibilité d'une API
@@ -181,15 +207,7 @@
             failoverStatus.style.display = 'block';
             document.body.style.borderTop = '5px solid orange';
             
-            // Rediriger les boutons vers la région passive
-            buttons.forEach(btn => {
-                const href = btn.getAttribute('href');
-                if (href.includes('/catalog')) {
-                    btn.href = API_PASSIVE + "/catalog";
-                } else if (href.includes('/user')) {
-                    btn.href = API_PASSIVE + "/user";
-                }
-            });
+            setButtonTargets(API_PASSIVE);
 
             // Démarrer le polling pour détecter la récupération
             startRecoveryPolling();
@@ -205,15 +223,7 @@
             recoveryStatus.style.display = 'block';
             document.body.style.borderTop = 'none';
 
-            // Rediriger les boutons vers la région active
-            buttons.forEach(btn => {
-                const href = btn.getAttribute('href');
-                if (href.includes('/catalog')) {
-                    btn.href = API_ACTIVE + "/catalog";
-                } else if (href.includes('/user')) {
-                    btn.href = API_ACTIVE + "/user";
-                }
-            });
+            setButtonTargets(API_ACTIVE);
 
             // Masquer le message après 5 secondes
             setTimeout(() => {
@@ -276,6 +286,7 @@
         }
 
         // Lancer le test au chargement de la page
+        setButtonTargets(API_ACTIVE);
         initialHealthCheck();
 
         // Optionnel : relancer un test toutes les 2 minutes si on est déjà basculé
