@@ -1,4 +1,4 @@
-# Doc — StreamFlex
+# README — StreamFlex
 
 ## 1. Fonctionnement du projet
 
