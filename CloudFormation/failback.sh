@@ -64,6 +64,10 @@ rm index_active.html index_passive.html
 
 echo "------------------------------------------------------"
 echo "Retour nominal termine."
-echo "ALB active : http://$ALB_URL_ACTIVE"
-echo "ALB passive : http://$ALB_URL_PASSIVE"
+echo "PORTAIL FRONT-END :"
+echo " - Principal : http://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}.s3-website-${REGION_ACTIVE}.amazonaws.com"
+echo " - Secours   : http://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}.s3-website-${REGION_PASSIVE}.amazonaws.com"
+echo "ALB API :"
+echo " - Active  : http://$ALB_URL_ACTIVE"
+echo " - Passive : http://$ALB_URL_PASSIVE (pilot light, 0 conteneur)"
 echo "------------------------------------------------------"

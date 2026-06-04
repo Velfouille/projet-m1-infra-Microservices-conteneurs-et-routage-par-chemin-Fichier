@@ -43,6 +43,9 @@ rm index_failover.html
 
 echo "------------------------------------------------------"
 echo "Basculement termine."
-echo "ALB de secours : http://$ALB_URL_PASSIVE"
-echo "Frontend secours : http://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}.s3-website-${REGION_PASSIVE}.amazonaws.com"
+echo "PORTAIL FRONT-END :"
+echo " - Principal bascule : http://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}.s3-website-${REGION_ACTIVE}.amazonaws.com"
+echo " - Secours actif     : http://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}.s3-website-${REGION_PASSIVE}.amazonaws.com"
+echo "ALB API :"
+echo " - Secours actif     : http://$ALB_URL_PASSIVE"
 echo "------------------------------------------------------"
