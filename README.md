@@ -4,8 +4,7 @@
 
 ### Architecture globale
 
-
-![Architecture globale](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/dev/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png)
+![Architecture globale](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/main/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png)
 
 
 ### Stacks CloudFormation
@@ -182,7 +181,7 @@ Ce script :
 3. Supprime les stacks CloudFormation (master → ECS → ALB → infra) dans les deux régions
 4. Supprime le bucket de templates S3
 
-**Temps estimé :** 10 à 15 minutes (surtout à cause de la suppression RDS si décommenté).
+**Temps estimé :** 10 à 15 minutes (surtout à cause de la suppression RDS si elle est décommentée).
 
 **En cas d'échec :** La stack passe en `DELETE_FAILED`. Le script affiche les événements d'erreur. Vérifier :
 - Un bucket S3 n'a pas été vidé correctement
