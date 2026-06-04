@@ -48,9 +48,9 @@ Le CDK génère des rôles IAM implicites qui entrent en conflit avec les Permis
 
 **Stack :** DynamoDB (mode Pay-Per-Request) pour les deux microservices
 
-**Pourquoi pas RDS MySQL (commenté) ?** Le LabRole du compte AWS Learner Lab ne dispose pas des permissions nécessaires pour créer des instances RDS.
+**Pourquoi pas RDS MySQL ?** Le choix initial prévoyait DynamoDB pour le catalogue (données produit au format clé-valeur, adaptées au NoSQL) et RDS MySQL pour les utilisateurs (données relationnelles structurées). Cependant, le LabRole de l'environnement Learner Lab ne dispose pas des permissions nécessaires pour créer des instances RDS.
 
-**Choix retenu :** DynamoDB en mode On-Demand = gratuit au repos, parfait pour un catalogue NoSQL. Synchronisation cross-région via DynamoDB Streams + Lambda.
+**Choix retenu :** DynamoDB pour les deux services, en mode On-Demand = gratuit au repos. Cette uniformité présente un avantage : la synchronisation cross-région est cohérente et simple via DynamoDB Streams + Lambda pour les deux tables. Le bloc RDS reste présent mais commenté dans `streamflex-infra.yaml` pour référence si le projet était déployé dans un environnement AWS complet.
 
 ---
 

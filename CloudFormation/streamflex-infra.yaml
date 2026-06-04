@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (Sync Continue DynamoDB Streams & RDS)'
+Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (Sync Continue DynamoDB Streams)'
 
 Parameters:
   ProjectName:
@@ -121,7 +121,7 @@ Resources:
       FunctionName: !Ref SyncUserLambda
       StartingPosition: LATEST
 
-  # 0.3b Base de données DynamoDB pour USER (Alternative à RDS)
+  # 0.3b Base de données DynamoDB pour USER (RDS initialement prévu mais non disponible en Learner Lab)
   UserDatabase:
     Type: AWS::DynamoDB::Table
     Properties:

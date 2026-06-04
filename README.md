@@ -25,6 +25,8 @@ streamflex-master.yaml  ← Stack maître (orchestre les 3 sous-stacks)
 | Catalog API | 8080 | `/catalog` | Node.js / Express | DynamoDB `streamflex-catalog-db` |
 | User API | 5000 | `/user` | Node.js / Express | DynamoDB `streamflex-user-db` |
 
+> **Note sur le choix des bases de données :** Idéalement, le catalogue (données produit clé-valeur) serait resté sur DynamoDB tandis que les utilisateurs (données relationnelles) auraient bénéficié d'une base RDS MySQL. Cependant, l'environnement Learner Lab ne fournit pas les permissions nécessaires à la création d'instances RDS. Les deux microservices utilisent donc DynamoDB, ce qui permet une synchronisation cross-région uniforme via DynamoDB Streams. Le bloc RDS reste présent mais commenté dans `streamflex-infra.yaml` pour référence.
+
 ### Synchronisation multi-région
 
 Un Stream DynamoDB est activé sur `streamflex-catalog-db` et `streamflex-user-db` en us-east-1. Deux fonctions Lambda écoutent les événements (INSERT, MODIFY, REMOVE) et répliquent les données vers us-west-2 via l'API DynamoDB.
@@ -181,7 +183,7 @@ Ce script :
 3. Supprime les stacks CloudFormation (master → ECS → ALB → infra) dans les deux régions
 4. Supprime le bucket de templates S3
 
-**Temps estimé :** 10 à 15 minutes (surtout à cause de la suppression RDS si elle est décommentée).
+**Temps estimé :** 10 à 15 minutes (principalement dû à la suppression des stacks CloudFormation).
 
 **En cas d'échec :** La stack passe en `DELETE_FAILED`. Le script affiche les événements d'erreur. Vérifier :
 - Un bucket S3 n'a pas été vidé correctement
