@@ -1,7 +1,7 @@
-29/05 :   - Mathias & Bastien : Projections sur l'infra et les solutions utilisés. Schéma draw.io (dispo sur la branche main).
-          - Mathias & Bastien : Comparaison et choix technique des solutions utilisés : AWS Fargate, DynamoDB pour le /catalog et Amazon RDS pour /user
-          - Mathias & Bastien : Choix d'utilisation d'un ALB (Application Load Balancer)
-          - Mathias & Bastien : Choix de programmation : CloudFormation -> permet de mieux structurer le projet, et langage plus visible et modulaire pour notre cas
+29/05 :   - Bastien & Mathias : Projections sur l'infra et les solutions utilisés. Schéma draw.io (dispo sur la branche main).
+          - Bastien & Mathias : Comparaison et choix technique des solutions utilisés : AWS Fargate, DynamoDB pour le /catalog et Amazon RDS pour /user
+          - Bastien & Mathias : Choix d'utilisation d'un ALB (Application Load Balancer)
+          - Bastien & Mathias : Choix de programmation : CloudFormation -> permet de mieux structurer le projet, et langage plus visible et modulaire pour notre cas
 
 01/06 :
           - Bastien, Mathias & Noe : creation du streamflex-infra.yaml
@@ -19,20 +19,20 @@
 03/06 :
           - Bastien : Mise à jour du schéma dans une version finale complète
           - Noé : Etude et mise en place de la réplication de deuxième région
-          - Noé & Mathias : Etude des différentes solutions de réplication des BDD DynamoDB et RDS d'une région à une autre
+          - Mathias & Noé : Etude des différentes solutions de réplication des BDD DynamoDB et RDS d'une région à une autre
           - Bastien : Etude et création du document etude-iam.md explicant les politiques IAM à intégrer dans le projet
           - Mathias et Noe : Etude et mise en place de la réplication de deuxième région
-          - Mathias et Bastien : MAJ APIs
-          - Mathias, Bastien et Noe : Troubleshooting de l'infrastructure
+          - Bastien & Mathias : MAJ APIs
+          - Bastien, Mathias & Noe : Troubleshooting de l'infrastructure
           - Mathias : abandon de la base RDS pour le /user et mise en place de DynamoDB
 
 04/06 :   
-         - Mathias et Noe : création des scripts de failover et de failback
+         - Mathias & Noe : création des scripts de failover et de failback
          - Mathias : mise a jour de la doc README.md
-         - Mathias : création de la doc-techno.md
-         - Mathias, Bastien & Noe : validation des scripts failover/failback
-         - Mathias, Bastien & Noe : synchronisation cross-région DynamoDB opérationnelle et testée
+         - Bastien & Mathias : création de la doc-techno.md
+         - Bastien, Mathias & Noe : validation des scripts failover/failback
+         - Bastien, Mathias & Noe : synchronisation cross-région DynamoDB opérationnelle et testée
          - Mathias : nettoyage du projet (suppression code mort RDS, harmonisation)
          - Mathias : mise à jour etude-iam.md (correction UserRole)
-         - Mathias, Bastien & Noe : version finale fonctionnelle validée
+         - Bastien, Mathias & Noe : version finale fonctionnelle validée
          
