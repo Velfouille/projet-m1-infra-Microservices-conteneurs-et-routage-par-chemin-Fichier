@@ -4,11 +4,9 @@
 
 ### Architecture globale
 
-```
-![Mon image]<img width="1788" height="2242" alt="image" src="https://github.com/user-attachments/assets/b802f6c2-b5d1-4470-ba75-d389462b642b" />
 
+![Architecture globale](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/dev/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png)
 
-```
 
 ### Stacks CloudFormation
 
