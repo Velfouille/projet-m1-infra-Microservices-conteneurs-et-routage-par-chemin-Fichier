@@ -242,22 +242,21 @@ La réplication des utilisateurs vers us-west-2 utilise une **Lambda VPC-enabled
 
 ```bash
 # 1. Créer un utilisateur via l'API east
-curl -X POST http://<alb-east>/user \
+curl -X POST http://streamflex-alb-1635093189.us-east-1.elb.amazonaws.com/user \
   -H "Content-Type: application/json" \
-  -d '{"userId":"u-replication-test","username":"test","plan":"premium"}'
+  -d '{"userId":"u-replication-test2","username":"test2","plan":"premium"}'
 
 # 2. Vérifier les logs de la Lambda de réplication en west
-aws logs tail /aws/lambda/streamflex-user-replication --region us-west-2
+MSYS_NO_PATHCONV=1 aws logs tail /aws/lambda/streamflex-user-replication --region us-west-2 --follow
 
 # 3. Vérifier les données directement dans le west (via conteneur Docker mysql)
-RDS_WEST=$(aws rds describe-db-clusters --region us-west-2 \
-  --query "DBClusters[?DBClusterIdentifier=='streamflex-user-cluster'].Endpoint" --output text)
-docker run --rm mysql:8.0 mysql -h "$RDS_WEST" -u admin -pStreamflexAdmin123 \
-  -D streamflex -e "SELECT userId, username, plan FROM users;"
+# ⚠️ Docker n'est pas installé, cette commande ne fonctionne pas. Option alternative :
+# Récupère juste l'endpoint RDS :
+MSYS_NO_PATHCONV=1 aws rds describe-db-clusters --region us-west-2 \
+  --query "DBClusters[?DBClusterIdentifier=='streamflex-user-cluster'].Endpoint" --output text
 
 # 4. Vérifier que la réponse API mentionne la réplication
-curl -s http://<alb-east>/user/health | python3 -m json.tool
-# → "replication": "lambda-configured"
+curl -s http://streamflex-alb-1635093189.us-east-1.elb.amazonaws.com/user/health
 ```
 
 Le health check retourne `"replication": "lambda-configured"` quand la réplication est active.
