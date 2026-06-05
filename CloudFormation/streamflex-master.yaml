@@ -23,15 +23,19 @@ Parameters:
     NoEcho: true
     Default: StreamflexAdmin123
     Description: Mot de passe master pour le cluster Aurora MySQL User
-  PeerDBHost:
-    Type: String
-    Default: ""
-    Description: Endpoint du cluster RDS peer pour replication cross-region
   PublicRDS:
     Type: String
     AllowedValues: ["true", "false"]
     Default: "false"
     Description: Rendre le cluster RDS accessible publiquement
+  ReplicationLambdaName:
+    Type: String
+    Default: streamflex-user-replication
+    Description: Nom de la Lambda de réplication User (créée dans les deux régions)
+  ReplicationRegion:
+    Type: String
+    Default: us-west-2
+    Description: Région où se trouve la Lambda de réplication cible
 ### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
@@ -44,6 +48,7 @@ Resources:
         ProjectName: !Ref ProjectName
         RDSMasterPassword: !Ref RDSMasterPassword
         PublicRDS: !Ref PublicRDS
+        TemplateBucket: !Ref TemplateBucket
 
   # 2. Couche Load Balancer (Dépend du Réseau)
   ALBStack:
@@ -74,7 +79,8 @@ Resources:
         UserTargetGroupArn: !GetAtt ALBStack.Outputs.UserTargetGroupArn
         UserDBEndpoint: !GetAtt NetworkStack.Outputs.UserDBEndpoint
         RDSMasterPassword: !Ref RDSMasterPassword
-        PeerDBHost: !Ref PeerDBHost
+        ReplicationLambdaName: !Ref ReplicationLambdaName
+        ReplicationRegion: !Ref ReplicationRegion
 
 Outputs:
   MasterALBUrl:

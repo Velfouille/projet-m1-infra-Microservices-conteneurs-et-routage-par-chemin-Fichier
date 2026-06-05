@@ -16,6 +16,9 @@ Parameters:
     AllowedValues: ["true", "false"]
     Default: "false"
     Description: Rendre le cluster RDS accessible publiquement (pour replication cross-region)
+  TemplateBucket:
+    Type: String
+    Description: Bucket S3 contenant les templates (pour la Lambda layer)
 
 Conditions:
   IsActiveRegion: !Equals [ !Ref "AWS::Region", "us-east-1" ]
@@ -328,6 +331,107 @@ Resources:
           - true
           - false
       CopyTagsToSnapshot: true
+
+  # =========================================================
+  # LAMBDA DE RÉPLICATION CROSS-RÉGION (USER API)
+  # - VPC-enabled dans les subnets privés → accès direct au RDS local
+  # - Invoquée cross-région depuis l'API User (us-east-1 → us-west-2)
+  # - Reçoit les opérations SQL et les exécute sur le RDS local
+  # =========================================================
+
+  ReplicationLambdaSG:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: MainVPC
+    Properties:
+      GroupDescription: Security group for user replication Lambda
+      VpcId: !Ref MainVPC
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+          Description: MySQL access to RDS within VPC
+
+  ReplicationLambdaToRDSIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref ReplicationLambdaSG
+      Description: MySQL from replication Lambda
+
+  UserReplicationLambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub "${ProjectName}-user-replication-layer"
+      Content:
+        S3Bucket: !Ref TemplateBucket
+        S3Key: lambda-layer/pymysql-layer.zip
+      CompatibleRuntimes:
+        - python3.9
+
+  UserReplicationLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: ReplicationLambdaSG
+    Properties:
+      FunctionName: !Sub "${ProjectName}-user-replication"
+      Handler: index.lambda_handler
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
+      Runtime: python3.9
+      Timeout: 30
+      Layers:
+        - !Ref UserReplicationLambdaLayer
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref ReplicationLambdaSG
+        SubnetIds:
+          - !Ref PrivateSubnetAZ1
+          - !Ref PrivateSubnetAZ2
+      Environment:
+        Variables:
+          DB_HOST: !GetAtt UserDBCluster.Endpoint.Address
+          DB_PORT: "3306"
+          DB_USER: admin
+          DB_PASSWORD: !Ref RDSMasterPassword
+          DB_NAME: streamflex
+      Code:
+        ZipFile: |
+          import pymysql
+          import os
+          import json
+
+          DB_HOST = os.environ['DB_HOST']
+          DB_PORT = int(os.environ.get('DB_PORT', '3306'))
+          DB_USER = os.environ['DB_USER']
+          DB_PASSWORD = os.environ['DB_PASSWORD']
+          DB_NAME = os.environ['DB_NAME']
+
+          def lambda_handler(event, context):
+              action = event.get('action')
+              params = event.get('params', [])
+
+              conn = pymysql.connect(
+                  host=DB_HOST, port=DB_PORT,
+                  user=DB_USER, password=DB_PASSWORD,
+                  database=DB_NAME, connect_timeout=5
+              )
+              try:
+                  with conn.cursor() as cursor:
+                      if action == 'INSERT':
+                          cursor.execute('INSERT INTO users (userId, username, plan, createdAt) VALUES (%s, %s, %s, %s)', params)
+                      elif action == 'DELETE':
+                          cursor.execute('DELETE FROM users WHERE userId = %s', params)
+                      else:
+                          raise ValueError(f'Unknown action: {action}')
+                  conn.commit()
+                  return {'statusCode': 200, 'body': f'{action} replicated'}
+              except Exception as e:
+                  print(f'Replication error: {str(e)}')
+                  raise
+              finally:
+                  conn.close()
 
 Outputs:
   VpcId:

@@ -34,10 +34,14 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Mot de passe master pour le cluster Aurora MySQL User
-  PeerDBHost:
+  ReplicationLambdaName:
     Type: String
-    Default: ""
-    Description: Endpoint du cluster RDS peer pour replication cross-region
+    Default: streamflex-user-replication
+    Description: Nom de la Lambda de réplication User
+  ReplicationRegion:
+    Type: String
+    Default: us-west-2
+    Description: Région cible pour la réplication
 
 Resources:
   # 1. Le Cluster ECS
@@ -115,8 +119,12 @@ Resources:
               Value: streamflex
             - Name: AWS_REGION
               Value: !Ref "AWS::Region"
-            - Name: PEER_DB_HOST
-              Value: !Ref PeerDBHost
+            - Name: AWS_ACCOUNT_ID
+              Value: !Ref "AWS::AccountId"
+            - Name: REPLICATION_LAMBDA_NAME
+              Value: !Ref ReplicationLambdaName
+            - Name: REPLICATION_REGION
+              Value: !Ref ReplicationRegion
 
   # 3. Les Services ECS (Maintien en condition opérationnelle)
   # Sécurité réseau :
