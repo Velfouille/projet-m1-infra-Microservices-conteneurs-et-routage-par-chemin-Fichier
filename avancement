@@ -50,4 +50,9 @@
            - Mathias : mise à jour de la documentation (README, doc-techno, streamflex-apis/README)
            - Mathias : migration des images de ECR vers Docker Hub pour les deux APIs
            - Mathias : rebuild et push des images sur Docker Hub
-           - Mathias, Bastien & Noe : test du failover automatique (Lambda OK, west desired=2, tâches bloquées en PENDING — à investiguer)
+            - Mathias, Bastien & Noe : test du failover automatique (Lambda OK, west desired=2, tâches bloquées en PENDING — à investiguer)
+            - Mathias : remplacement du dual-write RDS (PEER_DB_HOST) par une Lambda VPC-enabled cross-région
+            - Mathias : ajout Lambda `streamflex-user-replication` dans streamflex-infra.yaml (layer pymysql + VPC)
+            - Mathias : modification server.js pour utiliser @aws-sdk/client-lambda au lieu de peer pool
+            - Mathias : mise à jour streamflex-ecs.yaml (env vars Lambda), master.yaml, deploy.sh
+            - Mathias : build layer pymysql, rebuild image Docker user-api
