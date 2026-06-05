@@ -34,7 +34,6 @@ aws s3 cp streamflex-infra.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-alb.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-ecs.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-master.yaml s3://$TEMPLATE_BUCKET/
-aws s3 cp streamflex-route53.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-autofailover.yaml s3://$TEMPLATE_BUCKET/
 
 ### DEBUT MODIFICATION ( NOÉ) ###
