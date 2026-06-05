@@ -36,6 +36,10 @@ Parameters:
     Type: String
     Default: us-west-2
     Description: Région où se trouve la Lambda de réplication cible
+  LayerBucket:
+    Type: String
+    Default: ""
+    Description: Bucket S3 pour la Lambda layer (par défaut = TemplateBucket)
 ### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
@@ -49,6 +53,7 @@ Resources:
         RDSMasterPassword: !Ref RDSMasterPassword
         PublicRDS: !Ref PublicRDS
         TemplateBucket: !Ref TemplateBucket
+        LayerBucket: !Ref LayerBucket
 
   # 2. Couche Load Balancer (Dépend du Réseau)
   ALBStack:

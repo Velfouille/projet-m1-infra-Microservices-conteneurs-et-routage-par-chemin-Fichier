@@ -18,7 +18,10 @@ Parameters:
     Description: Rendre le cluster RDS accessible publiquement (pour replication cross-region)
   TemplateBucket:
     Type: String
-    Description: Bucket S3 contenant les templates (pour la Lambda layer)
+    Description: Bucket S3 contenant les templates
+  LayerBucket:
+    Type: String
+    Description: Bucket S3 contenant la Lambda layer (doit être dans la même région que le déploiement)
 
 Conditions:
   IsActiveRegion: !Equals [ !Ref "AWS::Region", "us-east-1" ]
@@ -367,7 +370,7 @@ Resources:
     Properties:
       LayerName: !Sub "${ProjectName}-user-replication-layer"
       Content:
-        S3Bucket: !Ref TemplateBucket
+        S3Bucket: !Ref LayerBucket
         S3Key: lambda-layer/pymysql-layer.zip
       CompatibleRuntimes:
         - python3.9

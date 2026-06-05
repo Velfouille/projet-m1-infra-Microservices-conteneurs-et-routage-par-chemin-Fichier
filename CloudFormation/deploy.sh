@@ -31,7 +31,19 @@ fi
 
 echo "📦 0.5/4 : Build et upload de la Lambda layer pymysql..."
 bash lambda-layer/build-layer.sh
+
+# Layer bucket pour us-east-1 (le même que le template bucket)
 aws s3 cp lambda-layer/pymysql-layer.zip s3://$TEMPLATE_BUCKET/lambda-layer/pymysql-layer.zip
+
+# Layer bucket pour us-west-2 (doit être dans la même région que la Lambda)
+TEMPLATE_BUCKET_WEST="s3-streamflex-templates-${TEAM_PREFIX}-${REGION_PASSIVE}"
+if aws s3api head-bucket --bucket "$TEMPLATE_BUCKET_WEST" 2>/dev/null; then
+    echo "✅ Le bucket $TEMPLATE_BUCKET_WEST existe déjà."
+else
+    echo "🔨 Création du bucket $TEMPLATE_BUCKET_WEST..."
+    aws s3 mb s3://$TEMPLATE_BUCKET_WEST --region $REGION_PASSIVE
+fi
+aws s3 cp lambda-layer/pymysql-layer.zip s3://$TEMPLATE_BUCKET_WEST/lambda-layer/pymysql-layer.zip
 
 echo "📁 1/4 : Upload des templates YAML vers S3..."
 aws s3 cp streamflex-infra.yaml s3://$TEMPLATE_BUCKET/
@@ -46,7 +58,7 @@ aws cloudformation deploy \
   --template-file streamflex-master.yaml \
   --stack-name $MASTER_STACK_NAME \
   --region $REGION_ACTIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 LayerBucket=$TEMPLATE_BUCKET \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
@@ -55,7 +67,7 @@ aws cloudformation deploy \
   --template-file streamflex-master.yaml \
   --stack-name $MASTER_STACK_NAME \
   --region $REGION_PASSIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 LayerBucket=$TEMPLATE_BUCKET_WEST \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
