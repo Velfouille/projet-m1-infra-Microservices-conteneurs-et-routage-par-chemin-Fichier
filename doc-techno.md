@@ -44,35 +44,43 @@ Le CDK génère des rôles IAM implicites qui entrent en conflit avec les Permis
 
 ---
 
-## 4. Couche données — DynamoDB + Lambda
+## 4. Couche données — DynamoDB (Catalog) + Aurora MySQL (User)
 
-**Stack :** DynamoDB (mode Pay-Per-Request) pour les deux microservices
+**Stack :** DynamoDB (mode Pay-Per-Request) pour le catalogue, Aurora MySQL provisionné (db.t3.medium) pour les utilisateurs, déployés par région.
 
-**Pourquoi pas RDS MySQL ?** Le choix initial prévoyait DynamoDB pour le catalogue (données produit au format clé-valeur, adaptées au NoSQL) et RDS MySQL pour les utilisateurs (données relationnelles structurées). Cependant, le LabRole de l'environnement Learner Lab ne dispose pas des permissions nécessaires pour créer des instances RDS.
+**Pourquoi ce choix hybride ?** Le catalogue stocke des données produit au format clé-valeur (titre, catégorie, description) — parfait pour DynamoDB (NoSQL, sans schéma fixe). Les utilisateurs ont des données relationnelles structurées (userId, username, plan) qui bénéficient des contraintes et requêtes SQL d'Aurora MySQL.
 
-**Choix retenu :** DynamoDB pour les deux services, en mode On-Demand = gratuit au repos. Cette uniformité présente un avantage : la synchronisation cross-région est cohérente et simple via DynamoDB Streams + Lambda pour les deux tables. Le bloc RDS reste présent mais commenté dans `streamflex-infra.yaml` pour référence si le projet était déployé dans un environnement AWS complet.
+**Synchronisation cross-région :** Le catalogue est répliqué via DynamoDB Streams + Lambda vers us-west-2. Les données utilisateurs utilisent une réplication **application-level** (dual-write) : chaque `POST /user` et `DELETE /user/:id` en us-east-1 est répliqué asynchrone vers le cluster Aurora west via le paramètre `PEER_DB_HOST`. En situation de failover, la région de secours possède les données répliquées.
 
----
-
-## 5. Registre d'images — Docker Hub (public)
-
-**Stack :** Images Docker hébergées sur Docker Hub (`velfouille/streamflex-api:catalog` et `:user`)
-
-**Pourquoi pas ECR privé avec réplication cross-region ?** La réplication inter-régions d'ECR nécessite des permissions IAM souvent bloquées en environnement Learner Lab.
-
-**Choix retenu :** Un registre public garantit que la région de secours peut puller les images sans erreur "Access Denied".
+**Pourquoi pas DynamoDB pour les deux ?** Uniformiser sur DynamoDB aurait simplifié la réplication mais aurait privé le User API des bénéfices du relationnel (jointures, contraintes d'intégrité, transactions ACID).
 
 ---
 
-## 6. Architecture multi-région — Pilot Light
+## 5. Registre d'images — Docker Hub (les deux APIs)
 
-**Stack :** us-east-1 (active, NbConteneurs=2), us-west-2 (pilot light, NbConteneurs=0)
+**Stack :** Les deux images sont hébergées sur **Docker Hub** (public).
+
+| Service | Image |
+|---|---|
+| Catalog API | `velfouille/streamflex-api:catalog-rds` |
+| User API | `velfouille/streamflex-api:user-rds` |
+
+**Pourquoi Docker Hub pour les deux ?** 
+- Un registre unique et public pour toute l'équipe, sans dépendre d'un compte AWS spécifique
+- Pull sans authentification depuis n'importe quel compte AWS ou environnement local
+- Pas de réplication cross-region à gérer (Docker Hub est mondialement accessible)
+
+---
+
+## 6. Architecture multi-région — Pilot Light + Auto-Failover
+
+**Stack :** us-east-1 (primaire, NbConteneurs=2), us-west-2 (pilot light, NbConteneurs=0)
 
 **Pourquoi pas une table DynamoDB globale ?** Droits insuffisants sur le LabRole. Solution alternative : DynamoDB Streams + Lambda.
 
-**Pourquoi le failover n'est pas auto-bidirectionnel ?** Route53 Health Check et DNS failover sont bloqués par le LabRole.
+**Comment le failover est automatique ?** Un Route 53 Health Check surveille l'ALB primaire. En cas d'indisponibilité prolongée, une **CloudWatch Alarm** déclenche une **Lambda** qui scale les services ECS de la région secondaire à NbConteneurs=2. Route 53 bascule le DNS automatiquement vers l'ALB west. Quand la région primaire revient, l'alarme repasse en OK, la Lambda scale west à 0, et Route 53 rebascule.
 
-**Choix retenu :** Déploiement manuel via scripts shell (`failover.sh` / `failback.sh`) qui ajustent le nombre de conteneurs et republient le frontend.
+**Choix retenu :** Pilot light côté west (0 conteneur, coût minimal) + Lambda d'auto-failover + Route 53 DNS failover. Le basculement est automatique en ~3-4 minutes. Les scripts `failover.sh` / `failback.sh` sont conservés pour republier le frontend manuellement.
 
 ---
 
@@ -99,4 +107,33 @@ Le CDK génère des rôles IAM implicites qui entrent en conflit avec les Permis
 
 ## 9. Schéma d'architecture
 
-Voir `Schéma Infra Streamflex V2.drawio` et `Schéma Infra Streamflex V2.png`.
+```
+us-east-1 (ACTIVE)                         us-west-2 (PILOT LIGHT)
+  ┌─────────────────────┐                   ┌─────────────────────┐
+  │ S3 Frontend (public)│                   │ S3 Frontend (public)│
+  └─────────┬───────────┘                   └─────────┬───────────┘
+            │ HTTP 80                                 │ HTTP 80
+  ┌─────────▼───────────┐                   ┌─────────▼───────────┐
+  │ ALB (internet-facing)│                   │ ALB (internet-facing)│
+  │  /catalog → ECS:8080 │                   │  /catalog → ECS:8080 │
+  │  /user    → ECS:5000 │                   │  /user    → ECS:5000 │
+  └─────────┬───────────┘                   └─────────┬───────────┘
+            │ SG: 8080/5000 depuis ALB SG              │ (Pilot Light)
+  ┌─────────▼───────────┐                   ┌─────────▼───────────┐
+  │ ECS Fargate ×2/svc  │                   │ ECS Fargate ×0/svc  │
+  │ (subnets privés)    │                   │ (subnets privés)    │
+  └──┬──────────────┬───┘                   └──┬──────────────┬───┘
+     │              │                          │              │
+     ▼              ▼                          ▼              ▼
+┌─────────┐  ┌──────────┐              ┌─────────┐  ┌──────────┐
+│DynamoDB │  │Aurora    │              │DynamoDB │  │Aurora    │
+│Catalog  │  │MySQL User│              │Catalog  │  │MySQL User│
+│(Stream→ │  │(SG: 3306 │              │(répliqué│  │(SG: 3306 │
+│ Lambda) │  │privés)   │              │depuis   │  │privés +  │
+└─────────┘  └──────────┘              │east)    │  │0.0.0.0/0)│
+                                        └─────────┘  └──────────┘
+
+Route53 HC (/user/health) ←→ CloudWatch Alarm → SNS → Lambda Auto-Failover
+```
+
+Voir aussi `Schéma Infra Streamflex V2.drawio` et `Schéma Infra Streamflex V2.png`.

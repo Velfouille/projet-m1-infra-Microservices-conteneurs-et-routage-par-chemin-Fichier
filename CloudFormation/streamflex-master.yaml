@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Master Stack (Reseau, ALB, ECS)'
+Description: 'StreamFlex - Master Stack (Reseau, ALB, ECS). Securite : ALB SG (HTTP/0.0.0.0), ECS SG (trafic depuis ALB only), RDS SG (subnets prives only).'
 
 Parameters:
   TemplateBucket:
@@ -18,6 +18,20 @@ Parameters:
   TeamPrefix:
     Type: String
     Description: Initiales de l'equipe pour l'unicite des buckets S3
+  RDSMasterPassword:
+    Type: String
+    NoEcho: true
+    Default: StreamflexAdmin123
+    Description: Mot de passe master pour le cluster Aurora MySQL User
+  PeerDBHost:
+    Type: String
+    Default: ""
+    Description: Endpoint du cluster RDS peer pour replication cross-region
+  PublicRDS:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Rendre le cluster RDS accessible publiquement
 ### FIN MODIFICATION ( NOÉ) ###
 
 Resources:
@@ -26,6 +40,10 @@ Resources:
     Type: AWS::CloudFormation::Stack
     Properties:
       TemplateURL: !Sub "https://${TemplateBucket}.s3.amazonaws.com/streamflex-infra.yaml"
+      Parameters:
+        ProjectName: !Ref ProjectName
+        RDSMasterPassword: !Ref RDSMasterPassword
+        PublicRDS: !Ref PublicRDS
 
   # 2. Couche Load Balancer (Dépend du Réseau)
   ALBStack:
@@ -54,9 +72,15 @@ Resources:
         ECSSecurityGroupId: !GetAtt ALBStack.Outputs.ECSSecurityGroupId
         CatalogTargetGroupArn: !GetAtt ALBStack.Outputs.CatalogTargetGroupArn
         UserTargetGroupArn: !GetAtt ALBStack.Outputs.UserTargetGroupArn
+        UserDBEndpoint: !GetAtt NetworkStack.Outputs.UserDBEndpoint
+        RDSMasterPassword: !Ref RDSMasterPassword
+        PeerDBHost: !Ref PeerDBHost
 
 Outputs:
   MasterALBUrl:
     Description: URL de l'Application Load Balancer
     # On va chercher l'output "ALBUrl" à l'intérieur de la sous-pile "ALBStack"
     Value: !GetAtt ALBStack.Outputs.ALBUrl
+  UserDBEndpoint:
+    Description: Endpoint du cluster Aurora MySQL User
+    Value: !GetAtt NetworkStack.Outputs.UserDBEndpoint

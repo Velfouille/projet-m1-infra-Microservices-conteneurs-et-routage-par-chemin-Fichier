@@ -27,6 +27,17 @@ Parameters:
   TeamPrefix:
     Type: String
     Description: Initiales de l'équipe pour l'unicité des buckets S3
+  UserDBEndpoint:
+    Type: String
+    Description: Endpoint du cluster Aurora MySQL User
+  RDSMasterPassword:
+    Type: String
+    NoEcho: true
+    Description: Mot de passe master pour le cluster Aurora MySQL User
+  PeerDBHost:
+    Type: String
+    Default: ""
+    Description: Endpoint du cluster RDS peer pour replication cross-region
 
 Resources:
   # 1. Le Cluster ECS
@@ -36,6 +47,13 @@ Resources:
       ClusterName: !Sub ${ProjectName}-cluster
       CapacityProviders:
         - FARGATE
+
+  # CloudWatch Log Group pour les logs des conteneurs
+  UserTaskLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${ProjectName}-user-task"
+      RetentionInDays: 7
 
   # 2. Définitions des Tâches (Le "moule" des conteneurs)
   CatalogTaskDefinition:
@@ -51,7 +69,7 @@ Resources:
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
         - Name: catalog-app
-          Image: velfouille/streamflex-api:catalog
+          Image: velfouille/streamflex-api:catalog-rds
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
@@ -74,17 +92,38 @@ Resources:
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
         - Name: user-app
-          Image: velfouille/streamflex-api:user
+          Image: velfouille/streamflex-api:user-rds
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Sub "/ecs/${ProjectName}-user-task"
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: ecs
           PortMappings:
             - ContainerPort: 5000
               Protocol: tcp
           Environment:
-            - Name: DYNAMODB_TABLE
-              Value: !Sub "${ProjectName}-user-db"
+            - Name: RDS_HOST
+              Value: !Ref UserDBEndpoint
+            - Name: RDS_PORT
+              Value: "3306"
+            - Name: RDS_USER
+              Value: admin
+            - Name: RDS_PASSWORD
+              Value: !Ref RDSMasterPassword
+            - Name: RDS_DB
+              Value: streamflex
             - Name: AWS_REGION
               Value: !Ref "AWS::Region"
+            - Name: PEER_DB_HOST
+              Value: !Ref PeerDBHost
 
   # 3. Les Services ECS (Maintien en condition opérationnelle)
+  # Sécurité réseau :
+  #   - AssignPublicIp: DISABLED → pas d'IP publique, conteneurs isolés
+  #   - Subnets privés → pas d'accès direct depuis Internet
+  #   - ECSSecurityGroup → trafic entrant UNIQUEMENT depuis l'ALB
+  #   - Sortie Internet via NAT Gateway (pour pull Docker, logs, etc.)
   CatalogService:
     Type: AWS::ECS::Service
     Properties:

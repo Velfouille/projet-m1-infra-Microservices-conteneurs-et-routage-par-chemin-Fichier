@@ -34,6 +34,7 @@ aws s3 cp streamflex-infra.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-alb.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-ecs.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-master.yaml s3://$TEMPLATE_BUCKET/
+aws s3 cp streamflex-autofailover.yaml s3://$TEMPLATE_BUCKET/
 
 ### DEBUT MODIFICATION ( NOÉ) ###
 echo "🏗️  2/4 : Déploiement de la région ACTIVE ($REGION_ACTIVE)..."
@@ -41,7 +42,7 @@ aws cloudformation deploy \
   --template-file streamflex-master.yaml \
   --stack-name $MASTER_STACK_NAME \
   --region $REGION_ACTIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 PeerDBHost="" \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
 
@@ -50,9 +51,27 @@ aws cloudformation deploy \
   --template-file streamflex-master.yaml \
   --stack-name $MASTER_STACK_NAME \
   --region $REGION_PASSIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX \
+  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 PublicRDS=true PeerDBHost="" \
   --capabilities CAPABILITY_IAM \
   --no-fail-on-empty-changeset
+
+echo "🔗 Récupération de l'endpoint RDS west pour la replication cross-region..."
+WEST_RDS_ENDPOINT=$(aws cloudformation describe-stacks --stack-name $MASTER_STACK_NAME --region $REGION_PASSIVE --query "Stacks[0].Outputs[?OutputKey=='UserDBEndpoint'].OutputValue" --output text)
+echo "   Endpoint west: $WEST_RDS_ENDPOINT"
+
+if [ -n "$WEST_RDS_ENDPOINT" ] && [ "$WEST_RDS_ENDPOINT" != "None" ]; then
+  echo "🔄 Mise à jour de la région ACTIVE avec PeerDBHost=$WEST_RDS_ENDPOINT..."
+  aws cloudformation deploy \
+    --template-file streamflex-master.yaml \
+    --stack-name $MASTER_STACK_NAME \
+    --region $REGION_ACTIVE \
+    --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 PeerDBHost=$WEST_RDS_ENDPOINT \
+    --capabilities CAPABILITY_IAM \
+    --no-fail-on-empty-changeset
+  echo "✅ Replication cross-region User API activee (east -> west)"
+else
+  echo "⚠️  Impossible de recuperer l'endpoint RDS west, replication non activee"
+fi
 
 # Récupération des URLs pour les DEUX régions (on le fait AVANT l'étape 4 maintenant)
 echo "🔍 Récupération des URLs ALB..."
@@ -74,6 +93,15 @@ aws s3 cp index_passive.html s3://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}/inde
 # Nettoyage des fichiers temporaires
 rm index_active.html index_passive.html
 
+echo "⚡ 5/4 : Déploiement de l'auto-failover (Route53 + Lambda)..."
+aws cloudformation deploy \
+  --template-file streamflex-autofailover.yaml \
+  --stack-name "StreamFlex-AutoFailover" \
+  --region $REGION_ACTIVE \
+  --parameter-overrides ALBUrlActive=$ALB_URL_ACTIVE \
+  --capabilities CAPABILITY_IAM \
+  --no-fail-on-empty-changeset
+
 echo "------------------------------------------------------"
 echo "🎉 PROJET MULTI-RÉGION TERMINÉ ! Voici tes liens :"
 echo "🌍 PORTAIL FRONT-END :"
@@ -81,6 +109,8 @@ echo " - Principal : http://${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}.s3-website-
 echo " - Secours   : http://${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}.s3-website-${REGION_PASSIVE}.amazonaws.com"
 echo "⚙️  ALB (APIs) :"
 echo " - Active  : http://$ALB_URL_ACTIVE"
-echo " - Passive : http://$ALB_URL_PASSIVE (Attention, 0 conteneur démarré !)"
+echo " - Passive : http://$ALB_URL_PASSIVE"
+echo "⚡ Auto-failover : Route53 health check + Lambda activés"
+echo "   (Basculement automatique si la région active est injoignable)"
 echo "------------------------------------------------------"
 ### FIN MODIFICATION ( NOÉ) ###

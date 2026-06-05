@@ -1,45 +1,33 @@
 # StreamFlex APIs Docker
 
-Ce projet contient 2 microservices prêts à être buildés et poussés sur Docker Hub.
+Ce projet contient 2 microservices. Les deux images sont hébergées sur **Docker Hub** (public).
 
-- `catalog-api` : répond sur le port `8080`, endpoint `/catalog`
-- `user-api` : répond sur le port `5000`, endpoint `/user`
+- **Catalog API** : port `8080`, endpoint `/catalog`
+- **User API** : port `5000`, endpoint `/user`
 
-## Test local
+## Build & Push (Catalog API)
 
 ```bash
 cd catalog-api
-docker build -t streamflex-catalog-api .
-docker run --rm -p 8080:8080 streamflex-catalog-api
-curl http://localhost:8080/catalog
+docker build -t <dockerhub_username>/streamflex-api:catalog-rds .
+docker push <dockerhub_username>/streamflex-api:catalog-rds
 ```
+
+Puis mettre à jour `Image:` dans `streamflex-ecs.yaml` (CatalogTaskDefinition).
+
+## Build & Push (User API)
 
 ```bash
 cd user-api
-docker build -t streamflex-user-api .
-docker run --rm -p 5000:5000 streamflex-user-api
-curl http://localhost:5000/user
+docker build -t <dockerhub_username>/streamflex-api:user-rds .
+docker push <dockerhub_username>/streamflex-api:user-rds
 ```
 
-## Export vers Docker Hub
+Puis mettre à jour `Image:` dans `streamflex-ecs.yaml` (UserTaskDefinition).
 
-Remplace `<dockerhub_username>` par ton identifiant Docker Hub.
+## Images actuelles
 
-```bash
-docker login
-
-cd catalog-api
-docker build -t <dockerhub_username>/streamflex-catalog-api:latest .
-docker push <dockerhub_username>/streamflex-catalog-api:latest
-
-cd ../user-api
-docker build -t <dockerhub_username>/streamflex-user-api:latest .
-docker push <dockerhub_username>/streamflex-user-api:latest
-```
-
-## Images à mettre dans ECS
-
-```text
-<dockerhub_username>/streamflex-catalog-api:latest
-<dockerhub_username>/streamflex-user-api:latest
-```
+| Service | Image Docker Hub |
+|---|---|
+| Catalog API | `velfouille/streamflex-api:catalog-rds` |
+| User API | `velfouille/streamflex-api:user-rds` |

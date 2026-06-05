@@ -189,7 +189,7 @@
          */
         async function testAPI(url) {
             try {
-                const response = await fetch(url + "/health", {
+                const response = await fetch(url + "/user/health", {
                     signal: AbortSignal.timeout(3000)
                 });
                 return response.ok;

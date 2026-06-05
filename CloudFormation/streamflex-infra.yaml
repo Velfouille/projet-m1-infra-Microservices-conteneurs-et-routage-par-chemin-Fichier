@@ -1,22 +1,34 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (Sync Continue DynamoDB Streams)'
+Description: 'StreamFlex - Couche Reseau (VPC, Subnets, IGW, NAT) et DB (DynamoDB Catalog + RDS Aurora User). Securite : RDS SG (MySQL/3306 subnets prives only), DynamoDB chiffre par defaut.'
 
 Parameters:
   ProjectName:
     Type: String
     Default: streamflex
     Description: Nom du projet utilisé pour tagger les ressources
+  RDSMasterPassword:
+    Type: String
+    NoEcho: true
+    Default: StreamflexAdmin123
+    Description: Mot de passe master pour le cluster Aurora MySQL User
+  PublicRDS:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Rendre le cluster RDS accessible publiquement (pour replication cross-region)
 
-# Condition pour s'assurer de déployer les bonnes ressources dans les bonnes régions
 Conditions:
   IsActiveRegion: !Equals [ !Ref "AWS::Region", "us-east-1" ]
+  MakePublicRDS: !Equals [!Ref PublicRDS, "true"]
 
 Resources:
   # =========================================================
   # COUCHE BASE DE DONNÉES NOSQL (DYNAMODB - CATALOGUE)
+  # Chiffrement au repos : activé par défaut (AWS owned key)
+  # Accès : via API AWS signée (IAM) - pas d'exposition publique
+  # Réplication cross-région : DynamoDB Stream + Lambda
   # =========================================================
-  
-  # 0.1 Base de données DynamoDB (Créée dans les deux régions)
+
   CatalogDatabase:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -28,18 +40,16 @@ Resources:
         - AttributeName: id
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
-      # Activation de DynamoDB Streams pour capturer chaque modification
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
 
-  # 0.2 Fonction Lambda de Synchronisation Continue
   SyncCatalogLambda:
     Type: AWS::Lambda::Function
     Condition: IsActiveRegion
     Properties:
       FunctionName: !Sub "${ProjectName}-dynamodb-sync-stream"
       Handler: index.lambda_handler
-      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole" 
+      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       Runtime: python3.9
       Timeout: 30
       Environment:
@@ -65,10 +75,9 @@ Resources:
                           keys = record['dynamodb']['Keys']
                           dynamo_dest.delete_item(TableName=table_name, Key=keys)
                   except Exception as e:
-                      print(f"Erreur lors de la réplication : {str(e)}")
-              return {"status": 200, "message": "Synchronisation continue terminée"}
+                      print(f"Erreur lors de la replication : {str(e)}")
+              return {"status": 200, "message": "Synchronisation continue terminee"}
 
-  # 0.3 Le lien (Trigger) entre le Stream DynamoDB et la Lambda
   DynamoDBStreamToLambda:
     Type: AWS::Lambda::EventSourceMapping
     Condition: IsActiveRegion
@@ -76,125 +85,6 @@ Resources:
       EventSourceArn: !GetAtt CatalogDatabase.StreamArn
       FunctionName: !Ref SyncCatalogLambda
       StartingPosition: LATEST
-
-  # 0.3a Fonction Lambda de Synchronisation Continue pour USER
-  SyncUserLambda:
-    Type: AWS::Lambda::Function
-    Condition: IsActiveRegion
-    Properties:
-      FunctionName: !Sub "${ProjectName}-dynamodb-sync-user-stream"
-      Handler: index.lambda_handler
-      Role: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
-      Runtime: python3.9
-      Timeout: 30
-      Environment:
-        Variables:
-          TABLE_NAME: !Sub "${ProjectName}-user-db"
-          DEST_REGION: "us-west-2"
-      Code:
-        ZipFile: |
-          import boto3
-          import os
-
-          def lambda_handler(event, context):
-              dest_region = os.environ['DEST_REGION']
-              table_name = os.environ['TABLE_NAME']
-              dynamo_dest = boto3.client('dynamodb', region_name=dest_region)
-              for record in event['Records']:
-                  event_name = record['eventName']
-                  try:
-                      if event_name in ['INSERT', 'MODIFY']:
-                          new_image = record['dynamodb']['NewImage']
-                          dynamo_dest.put_item(TableName=table_name, Item=new_image)
-                      elif event_name == 'REMOVE':
-                          keys = record['dynamodb']['Keys']
-                          dynamo_dest.delete_item(TableName=table_name, Key=keys)
-                  except Exception as e:
-                      print(f"Erreur lors de la replication user : {str(e)}")
-              return {"status": 200, "message": "Synchronisation continue user terminee"}
-
-  UserDynamoDBStreamToLambda:
-    Type: AWS::Lambda::EventSourceMapping
-    Condition: IsActiveRegion
-    Properties:
-      EventSourceArn: !GetAtt UserDatabase.StreamArn
-      FunctionName: !Ref SyncUserLambda
-      StartingPosition: LATEST
-
-  # 0.3b Base de données DynamoDB pour USER (RDS initialement prévu mais non disponible en Learner Lab)
-  UserDatabase:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: !Sub "${ProjectName}-user-db"
-      AttributeDefinitions:
-        - AttributeName: userId
-          AttributeType: S
-      KeySchema:
-        - AttributeName: userId
-          KeyType: HASH
-      BillingMode: PAY_PER_REQUEST
-      StreamSpecification:
-        StreamViewType: NEW_AND_OLD_IMAGES
-
-
-#========================================================
-# COUCHE BASE DE DONNÉES RELATIONNELLE (RDS - MICROSERVICE USER)
-# COMMENTÉE : LabRole n'a pas les permissions RDS
-# À décommenter dans un environnement AWS complet
-#========================================================
-
-  # # 0.4 Groupe de sous-réseaux pour RDS
-  # RDSSubnetGroup:
-  #   Type: AWS::RDS::DBSubnetGroup
-  #   Properties:
-  #     DBSubnetGroupDescription: "Sous-reseaux prives pour la base RDS"
-  #     SubnetIds:
-  #       - !Ref PrivateSubnetAZ1
-  #       - !Ref PrivateSubnetAZ2
-
-  # # 0.5 Security Group pour RDS (Notre version blindée et stricte)
-  # RDSSecurityGroup:
-  #   Type: AWS::EC2::SecurityGroup
-  #   Properties:
-  #     GroupDescription: "Acces MySQL strict pour les conteneurs ECS"
-  #     VpcId: !Ref MainVPC
-  #     SecurityGroupIngress:
-  #       - IpProtocol: tcp
-  #         FromPort: 3306
-  #         ToPort: 3306
-  #         CidrIp: 10.0.2.0/24 
-  #       - IpProtocol: tcp
-  #         FromPort: 3306
-  #         ToPort: 3306
-  #         CidrIp: 10.0.3.0/24
-  #     Tags:
-  #       - Key: Name
-  #         Value: !Sub ${ProjectName}-rds-sg
-
-  # # 0.6 Instance RDS Active
-  # UserDatabase:
-  #   Type: AWS::RDS::DBInstance
-  #   Condition: IsActiveRegion
-  #   DeletionPolicy: Delete
-  #   Properties:
-  #     DBInstanceIdentifier: !Sub "${ProjectName}-user-db-primary"
-  #     AllocatedStorage: 20
-  #     DBInstanceClass: db.t2.small
-  #     Engine: mysql
-  #     EngineVersion: "8.0.35"
-  #     MasterUsername: adminuser
-  #     MasterUserPassword: StreamflexPassword123
-  #     DBSubnetGroupName: !Ref RDSSubnetGroup
-  #     VpcSecurityGroupIds:
-  #       - !Ref RDSSecurityGroup
-  #     PubliclyAccessible: false
-  #     StorageEncrypted: false
-  #     MultiAZ: false
-  #     StorageType: gp2
-  #     BackupRetentionPeriod: 7
-  #     PreferredBackupWindow: "03:00-04:00"
-  #     PreferredMaintenanceWindow: "sun:04:00-sun:05:00"
-
 
   # =========================================================
   # COUCHE RESEAU (VPC)
@@ -228,7 +118,7 @@ Resources:
     Properties:
       VpcId: !Ref MainVPC
       CidrBlock: 10.0.0.0/24
-      AvailabilityZone: !Select [0, !GetAZs ''] 
+      AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -239,7 +129,7 @@ Resources:
     Properties:
       VpcId: !Ref MainVPC
       CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [1, !GetAZs ''] 
+      AvailabilityZone: !Select [1, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -363,6 +253,82 @@ Resources:
       SubnetId: !Ref PrivateSubnetAZ2
       RouteTableId: !Ref PrivateRouteTable2
 
+  # =========================================================
+  # COUCHE BASE DE DONNÉES RELATIONNELLE (RDS AURORA - MICROSERVICE USER)
+  # - Chiffrement au repos : activé par défaut sur Aurora (AES-256)
+  # - Accès : restreint aux subnets privés (10.0.2.0/24, 10.0.3.0/24)
+  # - West region uniquement : PublicRDS=true ouvre le port 3306 à 0.0.0.0/0
+  #   pour permettre la réplication cross-région depuis east ECS via NAT
+  # - Mot de passe : transmis en paramètre NoEcho (masqué dans les logs)
+  # =========================================================
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnets prives pour le cluster Aurora"
+      SubnetIds:
+        - !Ref PrivateSubnetAZ1
+        - !Ref PrivateSubnetAZ2
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: MainVPC
+    Properties:
+      GroupDescription: "Acces MySQL (3306) depuis les conteneurs ECS (subnets prives)"
+      VpcId: !Ref MainVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.2.0/24
+          Description: "Trafic MySQL depuis PrivateSubnetAZ1"
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.3.0/24
+          Description: "Trafic MySQL depuis PrivateSubnetAZ2"
+
+  PublicRDSAccess:
+    Condition: MakePublicRDS
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref RDSSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      CidrIp: 0.0.0.0/0
+      Description: "Acces public MySQL pour replication cross-region (west only)"
+
+  UserDBCluster:
+    Type: AWS::RDS::DBCluster
+    DependsOn: RDSSecurityGroup
+    Properties:
+      Engine: aurora-mysql
+      EngineVersion: "8.0.mysql_aurora.3.04.0"
+      DBClusterIdentifier: !Sub "${ProjectName}-user-cluster"
+      MasterUsername: admin
+      MasterUserPassword: !Ref RDSMasterPassword
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref RDSSecurityGroup
+      BackupRetentionPeriod: 1
+      DeletionProtection: false
+
+  UserDBInstance:
+    Type: AWS::RDS::DBInstance
+    DependsOn: UserDBCluster
+    Properties:
+      Engine: aurora-mysql
+      DBClusterIdentifier: !Ref UserDBCluster
+      DBInstanceClass: db.t3.medium
+      DBInstanceIdentifier: !Sub "${ProjectName}-user-instance"
+      PubliclyAccessible:
+        Fn::If:
+          - MakePublicRDS
+          - true
+          - false
+      CopyTagsToSnapshot: true
+
 Outputs:
   VpcId:
     Value: !Ref MainVPC
@@ -384,3 +350,6 @@ Outputs:
     Value: !Ref PrivateSubnetAZ2
     Export:
       Name: !Sub "${ProjectName}-${AWS::StackName}-PrivateSubnet2"
+  UserDBEndpoint:
+    Description: Endpoint du cluster Aurora MySQL User
+    Value: !GetAtt UserDBCluster.Endpoint.Address

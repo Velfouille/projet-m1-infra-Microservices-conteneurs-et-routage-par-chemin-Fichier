@@ -4,46 +4,49 @@
 
 ### Architecture globale
 
-![Architecture globale](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/b8741949e0cb5cf3f28c03a933199f4d69e26206/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png)
+L'infrastructure StreamFlex est déployée sur **deux régions AWS** (us-east-1 active, us-west-2 secours) selon le modèle **Pilot Light** :
 
+```
+                           us-east-1 (ACTIVE)                         us-west-2 (PILOT LIGHT)
+    ┌──────────────────────────────────────────┐   ┌──────────────────────────────────────────┐
+    │  S3 Frontend (bucket public)              │   │  S3 Frontend (bucket public)              │
+    │       ↑                                    │   │       ↑                                  │
+    │  ┌── ALB ── SG : HTTP(80) 0.0.0.0/0 ──┐  │   │  ┌── ALB ── SG : HTTP(80) 0.0.0.0/0 ──┐  │
+    │  │   ├── /catalog → ECS Fargate × 2    │  │   │  │   ├── /catalog → ECS Fargate × 0    │  │
+    │  │   └── /user    → ECS Fargate × 2    │  │   │  │   └── /user    → ECS Fargate × 0    │  │
+    │  └──── ECS SG : 8080/5000 depuis ALB ──┘  │   │  └──── ECS SG : 8080/5000 depuis ALB ──┘  │
+    │         │              │                   │   │         │              │                  │
+    │         ▼              ▼                   │   │         ▼              ▼                  │
+    │   DynamoDB Catalog   ┌─ RDS ──────────┐   │   │   DynamoDB Catalog   ┌─ RDS ──────────┐   │
+    │   (Stream → Sync ─── │ Aurora MySQL    │   │   │   (répliqué depuis  │ Aurora MySQL    │   │
+    │    Lambda → west)    │ SG: 3306 subnets│   │   │   east via Stream)  │ SG: 3306 subnets│   │
+    │                      │ privés 10.0.2/24│   │   │                     │ privés + 0.0.0.0│   │
+    │                      └─────────────────┘   │   │                     │ /0 (cross-région)│   │
+    │                                            │   │                     └─────────────────┘   │
+    └──────────────────────────────────────────┘   └──────────────────────────────────────────┘
+                           │   Réplication User API (POST/DELETE via PEER_DB_HOST)               │
+                           │   └── east ECS → NAT → Internet → west RDS (port 3306 public)     │
+                           └────────── Route53 Health Check (/user/health) ───────────────────┘
+                                                        ↓
+                                          CloudWatch Alarm → SNS → Lambda Auto-Failover
+                                               (scale ECS west: 0→2 en ALARM, 2→0 en OK)
+```
+
+- **us-east-1 (ACTIVE)** : VPC complet, 2 conteneurs Fargate par service, RDS Aurora MySQL, ALB, frontend S3
+- **us-west-2 (SECOURS)** : VPC complet, 0 conteneur (coût minimal), ALB présent, bases de données prêtes, frontend S3
+
+![Architecture globale](https://github.com/Velfouille/projet-m1-infra-Microservices-conteneurs-et-routage-par-chemin-Fichier/blob/main/Sch%C3%A9ma%20Infra%20Streamflex%20V2.png)
 
 ### Stacks CloudFormation
 
-Le déploiement est modulaire, avec 4 templates YAML :
+Le déploiement est modulaire, avec **6 templates YAML** :
 
-
-### 3. Réseau & Routage : Application Load Balancer (ALB)
-* **Le choix :** Un ALB public unique couplé à des règles de routage basées sur le chemin (Path-based routing).
-* **Les alternatives écartées :**
-  * *Amazon API Gateway :* Excellent pour les microservices purs, mais ajoute une couche de complexité réseau supplémentaire (nécessite des VPC Links pour atteindre des ressources privées) et un coût à la requête qui peut grimper en cas d'attaque DDoS.
-  * *Network Load Balancer (NLB) :* Opère au niveau 4 (TCP), ne permettant pas de lire les chemins d'URL (`/catalog` ou `/user`).
-* **L'argumentaire :** L'ALB opère au niveau 7 (HTTP/HTTPS) et permet de rediriger intelligemment le trafic vers des *Target Groups* distincts selon l'URL appelée (port 8080 pour le catalogue, port 5000 pour les utilisateurs). Il offre également une intégration native et parfaite avec les Security Groups pour appliquer le principe de moindre privilège.
-
-### 4. Couche Données : DynamoDB & Amazon RDS
-* **Le choix :** Amazon DynamoDB (NoSQL) pour le microservice `/catalog` et Amazon RDS PostgreSQL/MySQL (db.t3.micro) pour le microservice `/user`.
-* **Les alternatives écartées :**
-  * *Amazon Aurora Serverless :* Très performant, mais le coût de démarrage et les restrictions de réplication multi-région sur les comptes à budget limité rendent son utilisation risquée pour des tests.
-* **L'argumentaire :** Le catalogue de vidéos est un cas d'usage parfait pour le NoSQL (requêtes rapides et prévisibles). DynamoDB offre un mode de facturation "à la demande" (On-Demand) totalement gratuit lorsque l'API n'est pas sollicitée. RDS permet de conserver l'intégrité relationnelle pour les profils utilisateurs, tout en respectant les consignes de sécurité (Enhanced Monitoring désactivé).
-
-### 5. Registre d'Images : Amazon ECR Public (ou Docker Hub)
-* **Le choix :** Hébergement des images Docker sur un registre public.
-* **L'alternative écartée :** * *Amazon ECR Privé (avec réplication cross-region) :* La réplication d'un registre privé d'une région à une autre demande des permissions IAM inter-régions souvent bloquées sur les environnements de laboratoire.
-* **L'argumentaire :** Utiliser un registre public garantit que lors du test de basculement d'urgence (Crash-test Région) , le cluster ECS démarré en `us-west-2` pourra puller les images de conteneurs instantanément sans rencontrer d'erreurs "Access Denied" liées aux rôles d'exécution Fargate.
-
----
-
-## 🚀 Déploiement (Procédure de soutenance)
-
-Le déploiement se fait de manière modulaire via la CLI AWS. 
-
-**1. Déploiement de la couche réseau (us-east-1) :**
-```bash
-aws cloudformation deploy --template-file streamflex-infra.yaml --stack-name StreamFlex-Network --region us-east-1
 ```
-streamflex-master.yaml  ← Stack maître (orchestre les 3 sous-stacks)
-├── streamflex-infra.yaml  ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, Lambda)
-├── streamflex-alb.yaml    ← Couche ALB (load balancer, target groups, security groups)
-└── streamflex-ecs.yaml    ← Couche ECS (cluster Fargate, services, frontend S3)
+streamflex-master.yaml          ← Stack maître (orchestre les sous-stacks)
+├── streamflex-infra.yaml       ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, RDS Aurora)
+├── streamflex-alb.yaml         ← Couche ALB (load balancer, target groups, security groups)
+├── streamflex-ecs.yaml         ← Couche ECS (cluster Fargate, services, frontend S3)
+└── streamflex-autofailover.yaml ← Auto-failover (Lambda + SNS + CloudWatch Alarm + Route53 Health Check)
 ```
 
 ### Microservices
@@ -51,18 +54,31 @@ streamflex-master.yaml  ← Stack maître (orchestre les 3 sous-stacks)
 | Service | Port | Endpoint | Technologie | Base de données |
 |---|---|---|---|---|
 | Catalog API | 8080 | `/catalog` | Node.js / Express | DynamoDB `streamflex-catalog-db` |
-| User API | 5000 | `/user` | Node.js / Express | DynamoDB `streamflex-user-db` |
+| User API | 5000 | `/user` | Node.js / Express | Aurora MySQL (RDS) `streamflex-user-cluster` |
 
-> **Note sur le choix des bases de données :** Idéalement, le catalogue (données produit clé-valeur) serait resté sur DynamoDB tandis que les utilisateurs (données relationnelles) auraient bénéficié d'une base RDS MySQL. Cependant, l'environnement Learner Lab ne fournit pas les permissions nécessaires à la création d'instances RDS. Les deux microservices utilisent donc DynamoDB, ce qui permet une synchronisation cross-région uniforme via DynamoDB Streams. Le bloc RDS reste présent mais commenté dans `streamflex-infra.yaml` pour référence.
+> **Choix des bases de données :** Le catalogue utilise DynamoDB (données produit clé-valeur, adaptées au NoSQL) tandis que les utilisateurs bénéficient d'Aurora MySQL (données relationnelles structurées). Les deux sont déployés dans les deux régions : DynamoDB est synchronisé cross-région via Streams + Lambda ; Aurora MySQL utilise une réplication **application-level** (dual-write) depuis la région active vers la région passive via `PEER_DB_HOST`.
 
 ### Synchronisation multi-région
 
-Un Stream DynamoDB est activé sur `streamflex-catalog-db` et `streamflex-user-db` en us-east-1. Deux fonctions Lambda écoutent les événements (INSERT, MODIFY, REMOVE) et répliquent les données vers us-west-2 via l'API DynamoDB.
+#### Catalogue (DynamoDB)
+
+Un Stream DynamoDB est activé sur `streamflex-catalog-db` en us-east-1. Une fonction Lambda écoute les événements (INSERT, MODIFY, REMOVE) et réplique les données vers us-west-2 via l'API DynamoDB.
 
 | Table source | Lambda | Destination |
 |---|---|---|
 | `streamflex-catalog-db` | `streamflex-dynamodb-sync-stream` | us-west-2 |
-| `streamflex-user-db` | `streamflex-dynamodb-sync-user-stream` | us-west-2 |
+
+#### Users (Aurora MySQL)
+
+La réplication cross-région des utilisateurs est implémentée au **niveau application** (dual-write) :
+
+1. La région **active** (us-east-1) déploie l'API User avec **2 conteneurs** Fargate
+2. Chaque requête `POST /user` et `DELETE /user/:id` est exécutée sur **les deux régions** :
+   - Écriture locale sur le cluster Aurora MySQL est (via le VPC)
+   - Écriture asynchrone sur le cluster Aurora MySQL west (via le endpoint public)
+3. Les lectures (`GET /user`) utilisent uniquement la base locale pour la cohérence
+
+> ⚠️ **Limitation connue** : Le cluster RDS west est déployé dans des subnets privés. Bien que `PubliclyAccessible=true`, les subnets privés n'ont pas de route directe vers l'Internet Gateway. La réplication cross-région RDS peut donc échouer avec `ETIMEDOUT`. Solution envisagée : utiliser une **Lambda VPC-enabled** en us-west-2 comme proxy d'écriture, invoquée depuis l'API User east via le SDK AWS.
 
 ### Frontend
 
@@ -79,7 +95,7 @@ Le portail StreamFlex est un site statique hébergé sur S3. Il contient un scri
 problèmes de droits sur le LabRole
 - Compte AWS avec accès à us-east-1 et us-west-2
 - AWS CLI installée et configurée
-- Rôle IAM avec permissions suffisantes (EC2, ECS, DynamoDB, S3, Lambda, CloudFormation)
+- Rôle IAM avec permissions suffisantes (EC2, ECS, DynamoDB, S3, Lambda, RDS Aurora, CloudFormation)
 - Git
 - Docker (optionnel, pour builder les images)
 
@@ -104,36 +120,52 @@ chmod +x deploy.sh
 Le script vous demande vos initiales (ex: `mbn`, `team1`, etc.) puis :
 
 1. Crée un bucket S3 pour stocker les templates (s3-streamflex-templates-{prefix}-us-east-1)
-2. Uploade les 4 templates YAML vers ce bucket
-3. Déploie la stack maître en **us-east-1** avec NbConteneurs=2 (mode actif)
-4. Déploie la stack maître en **us-west-2** avec NbConteneurs=0 (mode pilot light)
+2. Uploade les **6 templates YAML** vers ce bucket
+3. Déploie la stack maître en **us-east-1** avec `NbConteneurs=2` (**région active** — conteneurs en marche)
+4. Déploie la stack maître en **us-west-2** avec `NbConteneurs=0` (**région passive** — Pilot Light, coût minimal)
 5. Récupère les URLs des deux ALB
-6. Génère les fichiers `index.html` dynamiques (substitution des variables)
+6. Génère les fichiers `index.html` dynamiques (substitution des variables `{{ALB_URL}}`, `{{ALB_URL_PASSIVE}}`, `{{REGION_NAME}}`)
 7. Uploade le frontend vers les buckets S3 des deux régions
-8. Affiche les URLs finales :
+8. Déploie la stack **StreamFlex-AutoFailover** (Lambda + SNS + CloudWatch Alarm + Route53 Health Check)
+9. Affiche les URLs finales :
 
 ```
 🌍 PORTAIL FRONT-END :
    - Principal : http://s3-projet-m1-infra-cloud-{prefix}-us-east-1.s3-website-us-east-1.amazonaws.com
    - Secours   : http://s3-projet-m1-infra-cloud-{prefix}-us-west-2.s3-website-us-west-2.amazonaws.com
 ⚙️  ALB (APIs) :
-   - Active  : http://{alb-dns-us-east-1}
-   - Passive : http://{alb-dns-us-west-2}
+   - Primary  : http://{alb-dns-us-east-1}
+   - Secondary : http://{alb-dns-us-west-2}
 ```
 
 ### Étape 3 : Builder et pusher les images Docker (si modification des APIs)
 
+Les deux images sont hébergées sur **Docker Hub** (public). Aucune authentification AWS nécessaire.
+
+**Catalog API** :
+
 ```bash
 cd streamflex-apis/catalog-api
-docker build -t <dockerhub_username>/streamflex-api:catalog .
-docker push <dockerhub_username>/streamflex-api:catalog
-
-cd ../user-api
-docker build -t <dockerhub_username>/streamflex-api:user .
-docker push <dockerhub_username>/streamflex-api:user
+docker build -t <dockerhub_username>/streamflex-api:catalog-rds .
+docker push <dockerhub_username>/streamflex-api:catalog-rds
 ```
 
-Puis mettre à jour l'image dans `streamflex-ecs.yaml` (ligne `Image:` sous `CatalogTaskDefinition` et `UserTaskDefinition`) et relancer `deploy.sh`.
+Puis mettre à jour `Image:` dans `streamflex-ecs.yaml` (CatalogTaskDefinition).
+
+**User API** :
+
+```bash
+cd streamflex-apis/user-api
+docker build -t <dockerhub_username>/streamflex-api:user-rds .
+docker push <dockerhub_username>/streamflex-api:user-rds
+```
+
+Puis mettre à jour `Image:` dans `streamflex-ecs.yaml` (UserTaskDefinition).
+
+| Service | Image actuelle |
+|---|---|
+| Catalog API | `velfouille/streamflex-api:catalog-rds` |
+| User API | `velfouille/streamflex-api:user-rds` |
 
 ### Étape 4 : Tester
 
@@ -155,9 +187,9 @@ curl -X POST http://<alb-url>/user \
 
 ---
 
-## 4. Validation de la synchronisation DynamoDB
+## 4. Validation de la synchronisation DynamoDB (Catalog)
 
-Après déploiement, vérifier que la réplication cross-région fonctionne.
+Après déploiement, vérifier que la réplication cross-région du catalogue fonctionne.
 
 ### 4.1 Insérer des données dans la région active
 
@@ -166,12 +198,6 @@ Après déploiement, vérifier que la réplication cross-région fonctionne.
 aws dynamodb put-item \
   --table-name streamflex-catalog-db \
   --item '{"id":{"S":"v-test"},"title":{"S":"Film test"},"category":{"S":"Action"}}' \
-  --region us-east-1
-
-# Utilisateurs
-aws dynamodb put-item \
-  --table-name streamflex-user-db \
-  --item '{"userId":{"S":"u-test"},"name":{"S":"Test"},"email":{"S":"test@test.com"}}' \
   --region us-east-1
 ```
 
@@ -182,18 +208,24 @@ aws dynamodb get-item \
   --table-name streamflex-catalog-db \
   --key '{"id":{"S":"v-test"}}' \
   --region us-west-2
-
-aws dynamodb get-item \
-  --table-name streamflex-user-db \
-  --key '{"userId":{"S":"u-test"}}' \
-  --region us-west-2
 ```
 
 ### 4.3 Vérifier les logs Lambda
 
 ```bash
 aws logs tail /aws/lambda/streamflex-dynamodb-sync-stream --region us-east-1
-aws logs tail /aws/lambda/streamflex-dynamodb-sync-user-stream --region us-east-1
+```
+
+### 4.4 Tester le User API (Aurora MySQL)
+
+```bash
+# Lister les utilisateurs
+curl http://<alb-url>/user
+
+# Créer un utilisateur
+curl -X POST http://<alb-url>/user \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"u1","username":"alice","plan":"premium"}'
 ```
 
 ---
@@ -222,36 +254,162 @@ Ce script :
 
 ---
 
-## 6. Procédure de basculement (Failover)
+## 6. Basculement automatique (Auto-Failover)
 
-### Bascule vers la région de secours
+### Architecture
+
+Le failover est entièrement automatisé via `streamflex-autofailover.yaml` :
+
+```
+us-east-1 (ACTIVE)  ←→  Route53 Health Check (/user/health)  ←→  CloudWatch Alarm
+  NbConteneurs=2                       ↓  (ALARM/OK)
+                                SNS Topic
+                                    ↓
+                          Lambda auto-failover
+                                    ↓
+                      us-west-2 (PILOT LIGHT)
+                        NbConteneurs=0 → 2 (failover)
+                        NbConteneurs=2 → 0 (failback)
+```
+
+### Fonctionnement
+
+1. La région primaire (**us-east-1**) tourne en permanence avec **NbConteneurs=2**
+2. La région secondaire (**us-west-2**) est en pilot light avec **NbConteneurs=0** (coût minimal)
+3. Route 53 vérifie la santé de l'ALB primaire via `/user/health` toutes les 30s
+4. Si l'ALB est injoignable pendant 3 périodes consécutives (~90s), la **CloudWatch Alarm** se déclenche
+5. L'alarme envoie une notification **SNS** → déclenche la **Lambda d'auto-failover**
+6. La Lambda scale les services ECS de west à **NbConteneurs=2**
+7. Route 53 bascule le DNS vers l'ALB west (automatique)
+
+### Retour à la normale (Failback)
+
+Quand la région primaire redevient joignable :
+1. Le Route 53 Health Check redevient vert
+2. La CloudWatch Alarm passe en état **OK**
+3. La Lambda scale les services west à **NbConteneurs=0**
+4. Route 53 rebascule le DNS vers l'ALB east (automatique)
+
+**Aucune intervention manuelle n'est nécessaire.**
+
+### Scripts manuels (optionnels)
+
+Les scripts `failover.sh` et `failback.sh` permettent de **republier le frontend** S3 manuellement :
 
 ```bash
 cd /TP-PROJET/CloudFormation
-./failover.sh
+./failover.sh   # frontend → pointe vers west
+./failback.sh   # frontend → pointe vers east
 ```
-
-Ce script :
-1. Met à jour la stack us-east-1 avec NbConteneurs=0 (arrêt des 4 conteneurs)
-2. Met à jour la stack us-west-2 avec NbConteneurs=2 (4 conteneurs au total : 2 catalog + 2 user)
-3. Récupère l'URL de l'ALB de secours
-4. Republie le frontend sur les deux buckets S3 avec l'ALB de secours comme endpoint principal
-
-### Retour vers la région nominale
-
-```bash
-cd /TP-PROJET/CloudFormation
-./failback.sh
-```
-
-Ce script :
-1. Remet la région active (us-east-1) avec NbConteneurs=2 (4 conteneurs au total : 2 catalog + 2 user)
-2. Remet la région passive (us-west-2) avec NbConteneurs=0 (pilot light, 0 conteneur)
-3. Republie le frontend sur les deux buckets S3 avec l'ALB active comme endpoint principal
 
 ---
 
-## 7. Que faire en cas de panne
+## 7. Test du failover et simulation de panne
+
+### 7.1 Test automatique (simulation de panne réelle)
+
+Mettre à 0 les services ECS en us-east-1 pour simuler l'indisponibilité de la région active :
+
+```bash
+aws ecs update-service --cluster streamflex-cluster --service streamflex-catalog-svc --desired-count 0 --region us-east-1
+aws ecs update-service --cluster streamflex-cluster --service streamflex-user-svc --desired-count 0 --region us-east-1
+```
+
+**Ce qui se passe :**
+1. Le Route53 Health Check (toutes les 30s) détecte que l'ALB ne répond plus sur `/user/health`
+2. Après 3 échecs consécutifs (~90s), la CloudWatch Alarm `streamflex-autofailover-alarm` passe en état **ALARM**
+3. L'alarme notifie le SNS Topic → déclenche la Lambda `streamflex-autofailover`
+4. La Lambda scale les services ECS en **us-west-2** à `desired-count=2`
+
+### 7.2 Surveillance en temps réel
+
+Observer la Lambda d'auto-failover s'exécuter :
+
+```bash
+# Activer le polling des logs Lambda
+aws logs tail /aws/lambda/streamflex-autofailover --follow --region us-east-1
+```
+
+Vérifier que les services passent de 0 à 2 conteneurs en us-west-2 :
+
+```bash
+aws ecs describe-services \
+  --cluster streamflex-cluster \
+  --services streamflex-catalog-svc streamflex-user-svc \
+  --region us-west-2 \
+  --query "services[].{Service:serviceName, Desired:desiredCount, Running:runningCount}"
+```
+
+Vérifier l'état de l'alarme CloudWatch :
+
+```bash
+aws cloudwatch describe-alarms \
+  --alarm-names streamflex-autofailover-alarm \
+  --region us-east-1 \
+  --query "MetricAlarms[].{Name:AlarmName, State:StateValue, Reason:StateReason}"
+```
+
+### 7.3 Vérification du basculement
+
+Tester que l'API répond toujours via la région passive :
+
+```bash
+# Récupérer l'URL ALB passive
+ALB_PASSIVE=$(aws cloudformation describe-stacks \
+  --stack-name StreamFlex-Master \
+  --region us-west-2 \
+  --query "Stacks[0].Outputs[?OutputKey=='MasterALBUrl'].OutputValue" \
+  --output text)
+
+# Tester les endpoints
+curl -s $ALB_PASSIVE/user/health
+curl -s $ALB_PASSIVE/catalog
+curl -s $ALB_PASSIVE/user
+```
+
+### 7.4 Restauration (failback)
+
+Remettre les services actifs en marche pour simuler le retour à la normale :
+
+```bash
+aws ecs update-service --cluster streamflex-cluster --service streamflex-catalog-svc --desired-count 2 --region us-east-1
+aws ecs update-service --cluster streamflex-cluster --service streamflex-user-svc --desired-count 2 --region us-east-1
+```
+
+**Ce qui se passe :**
+1. Le Route53 Health Check détecte le retour de l'ALB actif
+2. La CloudWatch Alarm passe en état **OK**
+3. La Lambda scale les services west à `desired-count=0` (retour en Pilot Light)
+4. Route53 rebascule le DNS vers l'ALB east
+
+### 7.5 Test manuel (frontend uniquement)
+
+Le script `failover.sh` republie la page frontend S3 pour pointer vers l'ALB de secours :
+
+```bash
+cd /TP-PROJET/CloudFormation
+echo "mathias" | ./failover.sh
+```
+
+Pour revenir à la normale :
+
+```bash
+echo "mathias" | ./failback.sh
+```
+
+### 7.6 Test de la bascule client-side (JS)
+
+Le frontend embarque un mécanisme de détection automatique :
+
+1. Ouvrir le portail frontend et la console navigateur (F12 → Console/Network)
+2. Le JS interroge `/health` sur l'ALB actif toutes les 30s
+3. Bloquer temporairement l'URL ALB active dans le navigateur (ex: via un bloqueur de requêtes ou en coupant la résolution DNS localement)
+4. Observer dans la console le message : *"Basculement actif : Vous êtes sur la région de secours"*
+5. Débloquer la requête → le JS détecte le retour et rebascule automatiquement
+
+---
+
+## 8. Que faire en cas de panne
 
 ### Panne : Le déploiement échoue
 
@@ -309,34 +467,194 @@ Ce script :
    - **Dépendance non résolue** : un ALB supprimé manuellement met la stack en drift
 3. Solution manuelle : supprimer la stack via la console AWS après avoir nettoyé les ressources bloquantes
 
-### Panne : Problème de synchronisation DynamoDB cross-région
+### Panne : Problème de synchronisation DynamoDB cross-région (Catalog)
 
-1. Vérifier que le Stream DynamoDB est bien activé sur les deux tables :
+1. Vérifier que le Stream DynamoDB est bien activé sur la table :
    ```bash
    aws dynamodb describe-table --table-name streamflex-catalog-db --region us-east-1 --query "Table.StreamSpecification"
-   aws dynamodb describe-table --table-name streamflex-user-db --region us-east-1 --query "Table.StreamSpecification"
    ```
-2. Vérifier les logs des Lambda de synchronisation dans CloudWatch :
+2. Vérifier les logs de la Lambda de synchronisation dans CloudWatch :
    ```bash
    aws logs tail /aws/lambda/streamflex-dynamodb-sync-stream --region us-east-1
-   aws logs tail /aws/lambda/streamflex-dynamodb-sync-user-stream --region us-east-1
    ```
 3. Forcer une synchronisation manuelle : insérer une entrée dans la table us-east-1 et vérifier sa présence dans us-west-2 (voir section 4)
 
+### Panne : Connexion RDS Aurora MySQL (User API)
+
+1. Vérifier que le cluster Aurora est bien créé dans la région :
+   ```bash
+   aws rds describe-db-clusters --region us-east-1 --query "DBClusters[?DBClusterIdentifier=='streamflex-user-cluster']"
+   ```
+2. Vérifier les logs du conteneur User :
+   ```bash
+   aws logs tail /ecs/streamflex-user-task --region us-east-1
+   ```
+3. La table `users` est créée automatiquement au démarrage de l'API. Vérifier avec :
+   ```bash
+   curl http://<alb-url>/health
+   ```
+
 ---
 
-## 8. Architecture de sécurité (IAM)
+## 9. Architecture de sécurité
 
-Voir le fichier `etude-iam.md` pour l'étude complète. Résumé des rôles proposés :
+### 9.1 Schéma des flux réseau et Security Groups
 
-| Rôle IAM | Usage |
-|---|---|
-| StreamFlexAdminRole | Administration complète |
-| StreamFlexDevOpsRole | Déploiement et maintenance |
-| StreamFlexFargateCatalogRole | Accès DynamoDB Catalog |
-| StreamFlexFargateUserRole | Accès DynamoDB User |
-| StreamFlexFailoverRole | Gestion de la reprise d'activité |
-| CloudFront Access Role | Lecture sécurisée du frontend S3 |
+```
+                           INTERNET
+                              │
+                              ▼
+                     ╔══════════════════╗
+                     ║  ALB Security    ║  ← HTTP (80) depuis 0.0.0.0/0
+                     ║  Group           ║
+                     ╚════╤═════════════╝
+                          │
+               ┌──────────┼──────────┐
+               │  TCP:8080 │ TCP:5000 │
+               ▼          │          ▼
+        ┌──────────────────┼──────────────────┐
+        │     ECS Security Group              │
+        │  (trafic UNIQUEMENT depuis ALB SG)  │
+        └──────┬──────────────────────┬───────┘
+               │                      │
+               ▼                      ▼
+      ┌─────────────────┐   ┌─────────────────┐
+      │  Catalog API     │   │  User API        │
+      │  (ECS Fargate)   │   │  (ECS Fargate)   │
+      │  Port 8080       │   │  Port 5000       │
+      └────────┬─────────┘   └────────┬─────────┘
+               │                      │
+               │              ┌───────┴────────┐
+               │              │ RDS Security   │
+               │              │ Group          │
+               │              │ MySQL (3306)   │
+               │              │ depuis Subnets │
+               │              │ privés (10.0.2 │
+               │              │ .0/24, 10.0.3  │
+               │              │ .0/24)         │
+               │              └───────┬────────┘
+               │                      │
+               ▼                      ▼
+      ┌─────────────────┐   ┌─────────────────┐
+      │  DynamoDB        │   │  Aurora MySQL   │
+      │  Catalog         │   │  User (RDS)     │
+      │  (AWS géré)      │   │  (subnets privés│
+      └─────────────────┘   └─────────────────┘
+```
 
-*Note : En environnement Learner Lab, le seul rôle disponible est `LabRole`. Les déploiements utilisent donc `LabRole` pour l'exécution Fargate.*
->>>>>>> dev
+**Légende des flux :**
+- Ligne pleine → trafic autorisé par Security Group
+- ~~Ligne barrée~~ → accès bloqué (ex: Internet → ECS direct)
+
+---
+
+### 9.2 Security Groups détaillés
+
+| Security Group | Ressource protégée | Règles entrantes | Justification |
+|---|---|---|---|
+| **ALBSecurityGroup** | ALB (Load Balancer) | HTTP (80) depuis 0.0.0.0/0 | L'ALB doit être accessible depuis Internet pour exposer les APIs |
+| **ECSSecurityGroup** | Conteneurs ECS Fargate | TCP 8080 depuis ALBSG, TCP 5000 depuis ALBSG | Seul l'ALB peut joindre les conteneurs ; pas d'accès direct depuis Internet |
+| **RDSSecurityGroup** | Cluster Aurora MySQL | MySQL (3306) depuis 10.0.2.0/24 et 10.0.3.0/24 | Seuls les subnets privés (contenant les ECS) peuvent accéder à la base |
+| **PublicRDSAccess** (west only) | Cluster Aurora MySQL west | MySQL (3306) depuis 0.0.0.0/0 | Nécessaire pour la réplication cross-région (l'East ECS → NAT → Internet → West RDS) |
+
+**Aucune règle sortante restrictive n'est définie** (default `Allow All` outbound) car les conteneurs ECS doivent pouvoir :
+- Télécharger les images Docker depuis Docker Hub (443)
+- Écrire les logs dans CloudWatch Logs (443)
+- Interroger DynamoDB (443)
+- Joindre le peer RDS west via Internet (pour la réplication cross-région)
+
+---
+
+### 9.3 Isolation réseau (VPC)
+
+| Couche | Subnets | Accès Internet | Accès direct depuis Internet |
+|---|---|---|---|
+| **ALB** | Publics (10.0.0.0/24, 10.0.1.0/24) | Oui (via IGW) | Oui (port 80) |
+| **ECS Fargate** | Privés (10.0.2.0/24, 10.0.3.0/24) | Sortant via NAT Gateway | Non 🔒 |
+| **Aurora MySQL** | Privés (via DBSubnetGroup) | Non | Non 🔒 |
+| **DynamoDB** | AWS géré (hors VPC) | N/A | Non (accès via API signée) |
+
+Les conteneurs ECS sont déployés dans des **subnets privés** sans IP publique (`AssignPublicIp: DISABLED`). Ils accèdent à Internet via les NAT Gateways pour les mises à jour et appels sortants.
+
+---
+
+### 9.4 Chiffrement
+
+| Ressource | Chiffrement au repos | Chiffrement en transit |
+|---|---|---|
+| Aurora MySQL | Activé par défaut (AES-256) | TLS entre ECS et RDS (MySQL native) |
+| DynamoDB Catalog | Activé par défaut (AWS owned key) | TLS (API AWS signée) |
+| Buckets S3 (frontend) | SSE-S3 (AES-256) | TLS (HTTPS pour upload) |
+| Bucket S3 (templates) | SSE-S3 (AES-256) | TLS (HTTPS) |
+
+Note : Le frontend est servi en HTTP (S3 Static Website), ce qui est volontaire pour simuler un site web public sans HTTPS (projet pédagogique).
+
+---
+
+### 9.5 Gestion des identités et accès (IAM)
+
+En environnement **AWS Learner Lab**, le seul rôle disponible est `LabRole`. Tous les composants (ECS Fargate, Lambda, CloudFormation) utilisent ce rôle.
+
+Dans un environnement de production, les rôles suivants seraient créés (principe du moindre privilège) :
+
+| Rôle IAM proposé | Services accessibles | Justification |
+|---|---|---|
+| `StreamFlexFargateCatalogRole` | DynamoDB (GetItem, PutItem, Query, Scan) | Le service Catalog ne fait que lire/écrire dans DynamoDB |
+| `StreamFlexFargateUserRole` | Aucun service AWS (connexion directe à RDS via TCP) | Le service User se connecte directement à MySQL via le driver |
+| `StreamFlexFailoverRole` | ECS (UpdateService, DescribeServices) | La Lambda de failover ne fait que scaler les services ECS |
+| `StreamFlexAdminRole` | Administrateur CloudFormation + tous les services | Déploiement initial et maintenance |
+
+Règles appliquées actuellement avec `LabRole` :
+- Les tâches Fargate utilisent `ExecutionRoleArn: LabRole` pour puller les images Docker et écrire dans CloudWatch Logs
+- La Lambda de synchronisation DynamoDB utilise `LabRole` avec des permissions étendues
+- La Lambda d'auto-failover utilise `LabRole` pour scaler les services ECS
+
+---
+
+### 9.6 Sécurisation des buckets S3
+
+| Bucket | Politique d'accès | Justification |
+|---|---|---|
+| `s3-streamflex-templates-{prefix}-us-east-1` | Privé (bloqué par défaut) | Contient les templates CloudFormation (infrastructure critique) |
+| `s3-projet-m1-infra-cloud-{prefix}-{region}` | Public (GetObject pour tout le monde) | Simule un site web public accessible sans authentification |
+
+Le bucket frontend est volontairement public (pédagogique). En production, on utiliserait **CloudFront** avec **Origin Access Control (OAC)** pour servir le frontend de manière sécurisée.
+
+---
+
+### 9.7 Auto-failover et sécurité
+
+- Le **Route53 Health Check** vérifie l'ALB east toutes les 30s (HTTP GET /user/health)
+- La **Lambda d'auto-failover** ne peut que modifier le `desiredCount` des services ECS (permissions limitées)
+- Le topic **SNS** est interne au projet (pas de souscription externe)
+- En cas d'ALARM, la Lambda scale west de 0 à 2 conteneurs ; en cas d'OK, elle scale west de 2 à 0
+
+**Aucune exposition publique** de la Lambda ou du topic SNS.
+
+---
+
+### 9.8 Bonnes pratiques et limitations connues
+
+**Ce qui est sécurisé :**
+- ✅ ECS en subnets privés (pas d'IP publique)
+- ✅ RDS accessible uniquement depuis les subnets privés (ou Internet pour west en cross-region)
+- ✅ L'ALB est le seul point d'entrée public vers les APIs
+- ✅ Chiffrement au repos sur toutes les bases de données
+- ✅ Aucune clé ou secret en clair dans les templates (NoEcho sur les mots de passe)
+- ✅ Le bucket de templates est privé
+
+**Ce qui pourrait être amélioré (hors scope du projet pédagogique) :**
+- ⬜ HTTPS (certificat ACM + TLS sur l'ALB)
+- ⬜ CloudFront + WAF devant l'ALB
+- ⬜ Rôles IAM dédiés (moindre privilège) au lieu de LabRole
+- ⬜ VPC Endpoints (Gateway pour S3, Interface pour DynamoDB/CloudWatch) pour éviter le trafic via Internet
+- ⬜ AWS Shield Advanced (protection DDoS)
+- ⬜ AWS Config pour la conformité continue
+- ⬜ GuardDuty pour la détection d'intrusion
+- ⬜ Règles d'egress restrictives sur les Security Groups
+
+---
+
+### 9.9 Référence : étude IAM complète
+
+Voir le fichier `etude-iam.md` pour l'étude détaillée des rôles IAM, politiques associées et matrice des accès.
