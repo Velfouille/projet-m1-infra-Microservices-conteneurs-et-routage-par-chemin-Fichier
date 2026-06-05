@@ -56,3 +56,4 @@
             - Mathias : modification server.js pour utiliser @aws-sdk/client-lambda au lieu de peer pool
             - Mathias : mise à jour streamflex-ecs.yaml (env vars Lambda), master.yaml, deploy.sh
             - Mathias : build layer pymysql, rebuild image Docker user-api
+           - Mathias : parallélisation deploy.sh (east + west en parallèle) et destroy.sh (ECS + stacks + wait en parallèle)
