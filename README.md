@@ -220,6 +220,8 @@ aws dynamodb get-item \
 
 ```bash
 aws logs tail /aws/lambda/streamflex-dynamodb-sync-stream --region us-east-1
+ou
+MSYS_NO_PATHCONV=1 aws logs tail /aws/lambda/streamflex-dynamodb-sync-stream --region us-east-1
 ```
 
 ### 4.4 Tester le User API (Aurora MySQL)
