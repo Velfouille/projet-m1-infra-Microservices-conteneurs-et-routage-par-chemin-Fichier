@@ -162,18 +162,24 @@ empty_bucket_if_exists "${FRONTEND_BUCKET_BASE}-${REGION_ACTIVE}"
 empty_bucket_if_exists "${FRONTEND_BUCKET_BASE}-${REGION_PASSIVE}"
 empty_bucket_if_exists "$TEMPLATE_BUCKET"
 
-echo "🧯 0.5/2 : Nettoyage des services/taches ECS restants..."
-cleanup_ecs_cluster "$REGION_PASSIVE"
-cleanup_ecs_cluster "$REGION_ACTIVE"
+echo "🧯 0.5/2 : Nettoyage PARALLÈLE des services/taches ECS..."
+cleanup_ecs_cluster "$REGION_PASSIVE" &
+cleanup_ecs_cluster "$REGION_ACTIVE" &
+wait
 
-echo "🔥 1/2 : Suppression des Master Stacks (ECS, ALB, RDS, Réseau)..."
-delete_stack_if_exists "$REGION_PASSIVE"
-delete_stack_if_exists "$REGION_ACTIVE"
+echo "🔥 1/2 : Suppression PARALLÈLE des Master Stacks..."
+delete_stack_if_exists "$REGION_PASSIVE" &
+delete_stack_if_exists "$REGION_ACTIVE" &
+wait
 
-echo "⏳ Attente de la destruction (cela peut prendre 10 à 15 minutes)..."
+echo "⏳ Attente PARALLÈLE de la destruction (peut prendre 10 à 15 min)..."
 DELETE_FAILED=0
-wait_stack_delete "$REGION_PASSIVE" || DELETE_FAILED=1
-wait_stack_delete "$REGION_ACTIVE" || DELETE_FAILED=1
+wait_stack_delete "$REGION_PASSIVE" &
+PASSIVE_PID=$!
+wait_stack_delete "$REGION_ACTIVE" &
+ACTIVE_PID=$!
+wait $PASSIVE_PID || DELETE_FAILED=1
+wait $ACTIVE_PID || DELETE_FAILED=1
 
 if [ "$DELETE_FAILED" -ne 0 ]; then
     echo "------------------------------------------------------"

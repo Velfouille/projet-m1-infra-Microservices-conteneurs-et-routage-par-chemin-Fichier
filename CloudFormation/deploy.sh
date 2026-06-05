@@ -53,25 +53,49 @@ aws s3 cp streamflex-master.yaml s3://$TEMPLATE_BUCKET/
 aws s3 cp streamflex-autofailover.yaml s3://$TEMPLATE_BUCKET/
 
 ### DEBUT MODIFICATION ( NOÉ) ###
-echo "🏗️  2/4 : Déploiement de la région ACTIVE ($REGION_ACTIVE)..."
-aws cloudformation deploy \
-  --template-file streamflex-master.yaml \
-  --stack-name $MASTER_STACK_NAME \
-  --region $REGION_ACTIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 LayerBucket=$TEMPLATE_BUCKET \
-  --capabilities CAPABILITY_IAM \
-  --no-fail-on-empty-changeset
+echo "🏗️  2-3/4 : Déploiement PARALLÈLE des deux régions..."
+DEPLOY_FAILED=0
 
-echo "🏗️  3/4 : Déploiement de la région PASSIVE ($REGION_PASSIVE - Pilot Light)..."
-aws cloudformation deploy \
-  --template-file streamflex-master.yaml \
-  --stack-name $MASTER_STACK_NAME \
-  --region $REGION_PASSIVE \
-  --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 LayerBucket=$TEMPLATE_BUCKET_WEST \
-  --capabilities CAPABILITY_IAM \
-  --no-fail-on-empty-changeset
+# East en arrière-plan
+(
+  echo "   Déploiement de $REGION_ACTIVE (active)..."
+  aws cloudformation deploy \
+    --template-file streamflex-master.yaml \
+    --stack-name $MASTER_STACK_NAME \
+    --region $REGION_ACTIVE \
+    --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=2 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 LayerBucket=$TEMPLATE_BUCKET \
+    --capabilities CAPABILITY_IAM \
+    --no-fail-on-empty-changeset
+  echo "✅ Région $REGION_ACTIVE déployée"
+) &
 
-echo "✅ Replication User API : Lambda VPC-enabled déployée dans les deux régions"
+DEPLOY_PID_EAST=$!
+
+# West en arrière-plan
+(
+  echo "   Déploiement de $REGION_PASSIVE (Pilot Light)..."
+  aws cloudformation deploy \
+    --template-file streamflex-master.yaml \
+    --stack-name $MASTER_STACK_NAME \
+    --region $REGION_PASSIVE \
+    --parameter-overrides TemplateBucket=$TEMPLATE_BUCKET NbConteneurs=0 TeamPrefix=$TEAM_PREFIX RDSMasterPassword=StreamflexAdmin123 LayerBucket=$TEMPLATE_BUCKET_WEST \
+    --capabilities CAPABILITY_IAM \
+    --no-fail-on-empty-changeset
+  echo "✅ Région $REGION_PASSIVE déployée"
+) &
+
+DEPLOY_PID_WEST=$!
+
+# Attendre la fin des deux
+wait $DEPLOY_PID_EAST || { echo "❌ Échec du déploiement $REGION_ACTIVE"; DEPLOY_FAILED=1; }
+wait $DEPLOY_PID_WEST || { echo "❌ Échec du déploiement $REGION_PASSIVE"; DEPLOY_FAILED=1; }
+
+if [ "$DEPLOY_FAILED" -ne 0 ]; then
+  echo "⛔ Un des déploiements a échoué. Vérifie les événements CloudFormation."
+  exit 1
+fi
+
+echo "✅ Réplication User API : Lambda VPC-enabled déployée dans les deux régions"
 echo "   (L'API east invoque la Lambda west via AWS SDK cross-region)"
 
 # Récupération des URLs pour les DEUX régions (on le fait AVANT l'étape 4 maintenant)
