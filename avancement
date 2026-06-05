@@ -40,4 +40,14 @@
           - Mathias : ajout du template Route 53 pour health checks et DNS failover
           - Mathias : création du template streamflex-autofailover.yaml (Lambda + SNS + CloudWatch)
           - Mathias : mise en place du pilot light west (NbConteneurs=0) avec auto-failover
-          - Mathias : deploiement automatique de l'auto-failover dans deploy.sh
+           - Mathias : deploiement automatique de l'auto-failover dans deploy.sh
+
+05/06 :
+           - Mathias : ajout du fichier DSv4.md (rétrospective OpenCode)
+           - Mathias : nettoyage des fichiers obsolètes (streamflex-route53.yaml)
+           - Mathias : sécurisation de l'infra (alb, ecs, infra, master) + mise à jour deploy.sh
+           - Mathias : ajout route /user/health dans server.js + auto-création BDD au démarrage
+           - Mathias : mise à jour de la documentation (README, doc-techno, streamflex-apis/README)
+           - Mathias : migration des images de ECR vers Docker Hub pour les deux APIs
+           - Mathias : rebuild et push des images sur Docker Hub
+           - Mathias, Bastien & Noe : test du failover automatique (Lambda OK, west desired=2, tâches bloquées en PENDING — à investiguer)
