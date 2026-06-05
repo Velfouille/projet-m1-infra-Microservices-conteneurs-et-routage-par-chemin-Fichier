@@ -56,17 +56,19 @@ Le CDK génère des rôles IAM implicites qui entrent en conflit avec les Permis
 
 ---
 
-## 5. Registre d'images — Docker Hub (Catalog) + ECR (User)
+## 5. Registre d'images — Docker Hub (les deux APIs)
 
-**Stack :** 
-- **Catalog API** : Docker Hub public (`velfouille/streamflex-api:catalog`)
-- **User API** : Amazon ECR privé (`${AccountId}.dkr.ecr.${Region}.amazonaws.com/streamflex-user-api:latest`)
+**Stack :** Les deux images sont hébergées sur **Docker Hub** (public).
 
-**Pourquoi ce choix hybride ?** 
-- Le Catalog API utilise une image publique pour permettre un pull sans authentification depuis n'importe quel compte AWS.
-- Le User API utilise ECR pour bénéficier du chiffrement et du contrôle d'accès natif AWS — l'image est pullée via le `LabRole` qui a accès à ECR par défaut.
+| Service | Image |
+|---|---|
+| Catalog API | `velfouille/streamflex-api:catalog-rds` |
+| User API | `velfouille/streamflex-api:user-rds` |
 
-**Pourquoi pas ECR privé avec réplication cross-region pour les deux ?** La réplication inter-régions d'ECR nécessite des permissions IAM souvent bloquées en environnement Learner Lab. L'image User est pushée manuellement dans chaque région si nécessaire.
+**Pourquoi Docker Hub pour les deux ?** 
+- Un registre unique et public pour toute l'équipe, sans dépendre d'un compte AWS spécifique
+- Pull sans authentification depuis n'importe quel compte AWS ou environnement local
+- Pas de réplication cross-region à gérer (Docker Hub est mondialement accessible)
 
 ---
 

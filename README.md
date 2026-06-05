@@ -138,28 +138,32 @@ Le script vous demande vos initiales (ex: `mbn`, `team1`, etc.) puis :
 
 ### Étape 3 : Builder et pusher les images Docker (si modification des APIs)
 
-**Catalog API** (Docker Hub — publique) :
+Les deux images sont hébergées sur **Docker Hub** (public). Aucune authentification AWS nécessaire.
+
+**Catalog API** :
 
 ```bash
 cd streamflex-apis/catalog-api
-docker build -t <dockerhub_username>/streamflex-api:catalog .
-docker push <dockerhub_username>/streamflex-api:catalog
+docker build -t <dockerhub_username>/streamflex-api:catalog-rds .
+docker push <dockerhub_username>/streamflex-api:catalog-rds
 ```
 
-Puis mettre à jour l'image dans `streamflex-ecs.yaml` (ligne `Image:` sous `CatalogTaskDefinition`).
+Puis mettre à jour `Image:` dans `streamflex-ecs.yaml` (CatalogTaskDefinition).
 
-**User API** (Amazon ECR — privée, propre au compte AWS) :
+**User API** :
 
 ```bash
 cd streamflex-apis/user-api
-aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account_id>.dkr.ecr.<region>.amazonaws.com
-aws ecr create-repository --repository-name streamflex-user-api --region <region> || true
-docker build -t streamflex-user-api .
-docker tag streamflex-user-api:latest <account_id>.dkr.ecr.<region>.amazonaws.com/streamflex-user-api:latest
-docker push <account_id>.dkr.ecr.<region>.amazonaws.com/streamflex-user-api:latest
+docker build -t <dockerhub_username>/streamflex-api:user-rds .
+docker push <dockerhub_username>/streamflex-api:user-rds
 ```
 
-L'image User API est référencée dynamiquement dans `streamflex-ecs.yaml` via `!Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/streamflex-user-api:latest"` — aucun changement manuel nécessaire après le push.
+Puis mettre à jour `Image:` dans `streamflex-ecs.yaml` (UserTaskDefinition).
+
+| Service | Image actuelle |
+|---|---|
+| Catalog API | `velfouille/streamflex-api:catalog-rds` |
+| User API | `velfouille/streamflex-api:user-rds` |
 
 ### Étape 4 : Tester
 

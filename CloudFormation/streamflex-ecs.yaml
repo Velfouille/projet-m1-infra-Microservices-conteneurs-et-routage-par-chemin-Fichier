@@ -69,7 +69,7 @@ Resources:
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
         - Name: catalog-app
-          Image: velfouille/streamflex-api:catalog
+          Image: velfouille/streamflex-api:catalog-rds
           PortMappings:
             - ContainerPort: 8080
               Protocol: tcp
@@ -92,7 +92,7 @@ Resources:
       TaskRoleArn: !Sub "arn:aws:iam::${AWS::AccountId}:role/LabRole"
       ContainerDefinitions:
         - Name: user-app
-          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/streamflex-user-api:latest"
+          Image: velfouille/streamflex-api:user-rds
           LogConfiguration:
             LogDriver: awslogs
             Options:
