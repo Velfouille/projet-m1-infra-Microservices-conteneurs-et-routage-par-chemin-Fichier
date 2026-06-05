@@ -107,6 +107,18 @@ app.options('*', (_req, res) => {
   res.sendStatus(204);
 });
 
+app.get('/user/health', async (_req, res) => {
+  try {
+    const conn = await pool.getConnection();
+    await conn.execute('SELECT 1');
+    conn.release();
+    const peerStatus = peerPool ? 'connected' : 'disabled';
+    res.status(200).json({ status: 'ok', service: 'user', database: 'aurora-mysql', peerReplication: peerStatus });
+  } catch (error) {
+    res.status(503).json({ status: 'error', service: 'user', message: error.message });
+  }
+});
+
 app.get('/health', async (_req, res) => {
   try {
     const conn = await pool.getConnection();
