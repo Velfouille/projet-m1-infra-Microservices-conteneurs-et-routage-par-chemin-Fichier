@@ -30,7 +30,7 @@ else
 fi
 
 echo "📦 0.5/4 : Build et upload de la Lambda layer pymysql..."
-bash lambda-layer/build-layer.sh
+bash lambda-layer/build-layer.sh || echo "⚠️  Layer non rebuildée — utilisation du zip existant"
 
 # Layer bucket pour us-east-1 (le même que le template bucket)
 aws s3 cp lambda-layer/pymysql-layer.zip s3://$TEMPLATE_BUCKET/lambda-layer/pymysql-layer.zip
