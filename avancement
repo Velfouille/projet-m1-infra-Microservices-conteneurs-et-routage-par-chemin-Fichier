@@ -40,7 +40,7 @@
           - Mathias : ajout du template Route 53 pour health checks et DNS failover
           - Mathias : création du template streamflex-autofailover.yaml (Lambda + SNS + CloudWatch)
           - Mathias : mise en place du pilot light west (NbConteneurs=0) avec auto-failover
-           - Mathias : deploiement automatique de l'auto-failover dans deploy.sh
+          - Mathias : deploiement automatique de l'auto-failover dans deploy.sh
 
 05/06 :
            - Mathias : ajout du fichier DSv4.md (rétrospective OpenCode)
