@@ -80,7 +80,7 @@ Le CDK génère des rôles IAM implicites qui entrent en conflit avec les Permis
 
 **Comment le failover est automatique ?** Un Route 53 Health Check surveille l'ALB primaire. En cas d'indisponibilité prolongée, une **CloudWatch Alarm** déclenche une **Lambda** qui scale les services ECS de la région secondaire à NbConteneurs=2. Route 53 bascule le DNS automatiquement vers l'ALB west. Quand la région primaire revient, l'alarme repasse en OK, la Lambda scale west à 0, et Route 53 rebascule.
 
-**Choix retenu :** Pilot light côté west (0 conteneur, coût minimal) + Lambda d'auto-failover + Route 53 DNS failover. Le basculement est automatique en ~3-4 minutes. Les scripts `failover.sh` / `failback.sh` sont conservés pour republier le frontend manuellement.
+**Choix retenu :** Pilot light côté west (0 conteneur, coût minimal) + Lambda d'auto-failover + Route 53 DNS failover. Le basculement est entièrement automatique en ~3-4 minutes.
 
 ---
 

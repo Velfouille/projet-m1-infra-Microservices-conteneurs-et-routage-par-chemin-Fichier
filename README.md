@@ -39,7 +39,7 @@ L'infrastructure StreamFlex est déployée sur **deux régions AWS** (us-east-1 
 
 ### Stacks CloudFormation
 
-Le déploiement est modulaire, avec **6 templates YAML** :
+Le déploiement est modulaire, avec **5 templates YAML** :
 
 ```
 streamflex-master.yaml          ← Stack maître (orchestre les sous-stacks)
@@ -91,8 +91,6 @@ Le portail StreamFlex est un site statique hébergé sur S3. Il contient un scri
 
 ## 2. Prérequis
 
-
-problèmes de droits sur le LabRole
 - Compte AWS avec accès à us-east-1 et us-west-2
 - AWS CLI installée et configurée
 - Rôle IAM avec permissions suffisantes (EC2, ECS, DynamoDB, S3, Lambda, RDS Aurora, CloudFormation)
@@ -292,16 +290,6 @@ Quand la région primaire redevient joignable :
 
 **Aucune intervention manuelle n'est nécessaire.**
 
-### Scripts manuels (optionnels)
-
-Les scripts `failover.sh` et `failback.sh` permettent de **republier le frontend** S3 manuellement :
-
-```bash
-cd /TP-PROJET/CloudFormation
-./failover.sh   # frontend → pointe vers west
-./failback.sh   # frontend → pointe vers east
-```
-
 ---
 
 ## 7. Test du failover et simulation de panne
@@ -382,22 +370,7 @@ aws ecs update-service --cluster streamflex-cluster --service streamflex-user-sv
 3. La Lambda scale les services west à `desired-count=0` (retour en Pilot Light)
 4. Route53 rebascule le DNS vers l'ALB east
 
-### 7.5 Test manuel (frontend uniquement)
-
-Le script `failover.sh` republie la page frontend S3 pour pointer vers l'ALB de secours :
-
-```bash
-cd /TP-PROJET/CloudFormation
-echo "mathias" | ./failover.sh
-```
-
-Pour revenir à la normale :
-
-```bash
-echo "mathias" | ./failback.sh
-```
-
-### 7.6 Test de la bascule client-side (JS)
+### 7.5 Test de la bascule client-side (JS)
 
 Le frontend embarque un mécanisme de détection automatique :
 
@@ -444,7 +417,7 @@ Le frontend embarque un mécanisme de détection automatique :
    aws logs describe-log-groups --region us-east-1
    aws logs tail /ecs/streamflex-catalog-task --region us-east-1
    ```
-4. Si la région active est injoignable, lancer `./failover.sh`
+4. Si la région active est injoignable, le failover automatique via Route53 + CloudWatch + Lambda prend le relais (~90s)
 
 ### Panne : Le frontend S3 ne s'affiche pas
 
