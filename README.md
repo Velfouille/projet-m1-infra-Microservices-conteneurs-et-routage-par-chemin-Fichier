@@ -7,7 +7,7 @@
 L'infrastructure StreamFlex est déployée sur **deux régions AWS** (us-east-1 active, us-west-2 secours) selon le modèle **Pilot Light** :
 
 ```
-                           us-east-1 (ACTIVE)                         us-west-2 (PILOT LIGHT)
+                            us-east-1 (ACTIVE)                         us-west-2 (PILOT LIGHT)
     ┌──────────────────────────────────────────┐   ┌──────────────────────────────────────────┐
     │  S3 Frontend (bucket public)              │   │  S3 Frontend (bucket public)              │
     │       ↑                                    │   │       ↑                                  │
@@ -19,13 +19,13 @@ L'infrastructure StreamFlex est déployée sur **deux régions AWS** (us-east-1 
     │         ▼              ▼                   │   │         ▼              ▼                  │
     │   DynamoDB Catalog   ┌─ RDS ──────────┐   │   │   DynamoDB Catalog   ┌─ RDS ──────────┐   │
     │   (Stream → Sync ─── │ Aurora MySQL    │   │   │   (répliqué depuis  │ Aurora MySQL    │   │
-    │    Lambda → west)    │ SG: 3306 subnets│   │   │   east via Stream)  │ SG: 3306 subnets│   │
-    │                      │ privés 10.0.2/24│   │   │                     │ privés + 0.0.0.0│   │
-    │                      └─────────────────┘   │   │                     │ /0 (cross-région)│   │
-    │                                            │   │                     └─────────────────┘   │
-    └──────────────────────────────────────────┘   └──────────────────────────────────────────┘
-                           │   Réplication User API (POST/DELETE via PEER_DB_HOST)               │
-                           │   └── east ECS → NAT → Internet → west RDS (port 3306 public)     │
+    │   Lambda → west)    │ SG: 3306 subnets│   │   │   east via Stream)  │ SG: 3306 subnets│   │
+    │                      │ privés          │   │   │                     │ privés          │   │
+    │                      └─────────────────┘   │   │                     └─────────────────┘   │
+    │                                            │   │                          ↑               │
+    └──────────────────────────────────────────┘   │   └── Lambda VPC-enabled ──┘               │
+                           │   Réplication User API (POST/DELETE via Lambda.invoke cross-region) │
+                           │   └── east ECS → API AWS → Lambda west VPC → west RDS (privé)     │
                            └────────── Route53 Health Check (/user/health) ───────────────────┘
                                                         ↓
                                           CloudWatch Alarm → SNS → Lambda Auto-Failover
@@ -56,7 +56,7 @@ streamflex-master.yaml          ← Stack maître (orchestre les sous-stacks)
 | Catalog API | 8080 | `/catalog` | Node.js / Express | DynamoDB `streamflex-catalog-db` |
 | User API | 5000 | `/user` | Node.js / Express | Aurora MySQL (RDS) `streamflex-user-cluster` |
 
-> **Choix des bases de données :** Le catalogue utilise DynamoDB (données produit clé-valeur, adaptées au NoSQL) tandis que les utilisateurs bénéficient d'Aurora MySQL (données relationnelles structurées). Les deux sont déployés dans les deux régions : DynamoDB est synchronisé cross-région via Streams + Lambda ; Aurora MySQL utilise une réplication **application-level** (dual-write) depuis la région active vers la région passive via `PEER_DB_HOST`.
+> **Choix des bases de données :** Le catalogue utilise DynamoDB (données produit clé-valeur, adaptées au NoSQL) tandis que les utilisateurs bénéficient d'Aurora MySQL (données relationnelles structurées). Les deux sont déployés dans les deux régions : DynamoDB est synchronisé cross-région via Streams + Lambda ; Aurora MySQL utilise une **Lambda VPC-enabled** dans la région passive, invoquée cross-région depuis l'API User east via le SDK AWS.
 
 ### Synchronisation multi-région
 
@@ -70,15 +70,21 @@ Un Stream DynamoDB est activé sur `streamflex-catalog-db` en us-east-1. Une fon
 
 #### Users (Aurora MySQL)
 
-La réplication cross-région des utilisateurs est implémentée au **niveau application** (dual-write) :
+La réplication cross-région des utilisateurs utilise une **Lambda VPC-enabled** dans la région passive :
 
 1. La région **active** (us-east-1) déploie l'API User avec **2 conteneurs** Fargate
-2. Chaque requête `POST /user` et `DELETE /user/:id` est exécutée sur **les deux régions** :
-   - Écriture locale sur le cluster Aurora MySQL est (via le VPC)
-   - Écriture asynchrone sur le cluster Aurora MySQL west (via le endpoint public)
-3. Les lectures (`GET /user`) utilisent uniquement la base locale pour la cohérence
+2. Chaque requête `POST /user` et `DELETE /user/:id` :
+   - Écriture locale sur le cluster Aurora MySQL east (via le VPC)
+   - Invocation asynchrone de la Lambda `streamflex-user-replication` en **us-west-2** via `Lambda.invoke()` (SDK AWS)
+3. La Lambda, **VPC-enabled** dans les subnets privés west, exécute la requête SQL sur le cluster Aurora MySQL west
+4. Les lectures (`GET /user`) utilisent uniquement la base locale pour la cohérence
 
-> ⚠️ **Limitation connue** : Le cluster RDS west est déployé dans des subnets privés. Bien que `PubliclyAccessible=true`, les subnets privés n'ont pas de route directe vers l'Internet Gateway. La réplication cross-région RDS peut donc échouer avec `ETIMEDOUT`. Solution envisagée : utiliser une **Lambda VPC-enabled** en us-west-2 comme proxy d'écriture, invoquée depuis l'API User east via le SDK AWS.
+| Table source | Mécanisme | Destination |
+|---|---|---|
+| `streamflex-catalog-db` (DynamoDB) | Stream + Lambda (DynamoDB API) | us-west-2 |
+| `streamflex-user-cluster` (Aurora MySQL) | Lambda VPC-enabled invoquée cross-région via SDK | us-west-2 |
+
+> ✅ **Avantage** : La Lambda étant dans le VPC west (subnets privés), elle accède directement au RDS west sans exposition publique. Plus besoin de `PublicRDS=true`. La réplication fonctionne via l'API AWS (HTTPS) et non via connexion TCP directe.
 
 ### Frontend
 
@@ -118,14 +124,16 @@ chmod +x deploy.sh
 Le script vous demande vos initiales (ex: `mbn`, `team1`, etc.) puis :
 
 1. Crée un bucket S3 pour stocker les templates (s3-streamflex-templates-{prefix}-us-east-1)
-2. Uploade les **6 templates YAML** vers ce bucket
-3. Déploie la stack maître en **us-east-1** avec `NbConteneurs=2` (**région active** — conteneurs en marche)
-4. Déploie la stack maître en **us-west-2** avec `NbConteneurs=0` (**région passive** — Pilot Light, coût minimal)
-5. Récupère les URLs des deux ALB
-6. Génère les fichiers `index.html` dynamiques (substitution des variables `{{ALB_URL}}`, `{{ALB_URL_PASSIVE}}`, `{{REGION_NAME}}`)
-7. Uploade le frontend vers les buckets S3 des deux régions
-8. Déploie la stack **StreamFlex-AutoFailover** (Lambda + SNS + CloudWatch Alarm + Route53 Health Check)
-9. Affiche les URLs finales :
+2. Build et uploade la **Lambda layer pymysql** vers S3
+3. Uploade les **6 templates YAML** vers ce bucket
+4. Déploie la stack maître en **us-east-1** avec `NbConteneurs=2` (**région active** — conteneurs en marche)
+5. Déploie la stack maître en **us-west-2** avec `NbConteneurs=0` (**région passive** — Pilot Light, coût minimal)
+   - La Lambda `streamflex-user-replication` (VPC-enabled) est créée dans les deux régions
+6. Récupère les URLs des deux ALB
+7. Génère les fichiers `index.html` dynamiques (substitution des variables `{{ALB_URL}}`, `{{ALB_URL_PASSIVE}}`, `{{REGION_NAME}}`)
+8. Uploade le frontend vers les buckets S3 des deux régions
+9. Déploie la stack **StreamFlex-AutoFailover** (Lambda + SNS + CloudWatch Alarm + Route53 Health Check)
+10. Affiche les URLs finales :
 
 ```
 🌍 PORTAIL FRONT-END :
@@ -226,6 +234,53 @@ curl -X POST http://<alb-url>/user \
   -d '{"userId":"u1","username":"alice","plan":"premium"}'
 ```
 
+### 4.5 Validation de la réplication RDS (User)
+
+La réplication des utilisateurs vers us-west-2 utilise une **Lambda VPC-enabled** invoquée cross-région. Pour valider :
+
+```bash
+# 1. Créer un utilisateur via l'API east
+curl -X POST http://<alb-east>/user \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"u-replication-test","username":"test","plan":"premium"}'
+
+# 2. Vérifier les logs de la Lambda de réplication en west
+aws logs tail /aws/lambda/streamflex-user-replication --region us-west-2
+
+# 3. Vérifier les données directement dans le west (via conteneur Docker mysql)
+RDS_WEST=$(aws rds describe-db-clusters --region us-west-2 \
+  --query "DBClusters[?DBClusterIdentifier=='streamflex-user-cluster'].Endpoint" --output text)
+docker run --rm mysql:8.0 mysql -h "$RDS_WEST" -u admin -pStreamflexAdmin123 \
+  -D streamflex -e "SELECT userId, username, plan FROM users;"
+
+# 4. Vérifier que la réponse API mentionne la réplication
+curl -s http://<alb-east>/user/health | python3 -m json.tool
+# → "replication": "lambda-configured"
+```
+
+Le health check retourne `"replication": "lambda-configured"` quand la réplication est active.
+
+### 4.6 Test CRUD complet avec réplication
+
+```bash
+# Créer
+curl -X POST http://<alb-east>/user \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"u-crud-test","username":"crud","plan":"basic"}'
+
+# Lire (local seulement)
+curl http://<alb-east>/user
+
+# Supprimer (répliqué vers west)
+curl -X DELETE http://<alb-east>/user/u-crud-test
+
+# Vérifier les 3 invocations Lambda
+aws logs tail /aws/lambda/streamflex-user-replication --region us-west-2 \
+  --since 5m | grep -E "START|END|ERROR"
+```
+
+Chaque `POST` et `DELETE` génère une invocation Lambda asynchrone (`InvocationType: Event`) vers us-west-2. Les logs doivent montrer 3 `START`/`END` sans erreur.
+
 ---
 
 ## 5. Destruction de l'infrastructure
@@ -290,6 +345,24 @@ Quand la région primaire redevient joignable :
 
 **Aucune intervention manuelle n'est nécessaire.**
 
+### Runbook de contingence — scripts manuels
+
+Les scripts `failover.sh` et `failback.sh` constituent le **runbook de contingence** : une porte de sortie manuelle si l'auto-failover tombait en panne (Lambda défaillante, permissions IAM révoquées, etc.).
+
+Chaque script est **autonome** : il scale l'ECS **et** republie le frontend :
+
+| Script | ECS west | Frontend | Usage |
+|---|---|---|---|
+| `failover.sh` | `desiredCount 0 → 2` + attente `runningCount=2` | Pointe vers west | Activation manuelle de west |
+| `failback.sh` | `desiredCount 2 → 0` + attente `runningCount=0` | Pointe vers east (actif) / west (secours) | Retour en Pilot Light |
+
+```bash
+cd /TP-PROJET/CloudFormation
+./failover.sh   # scale west 0→2 + frontend vers west
+./failback.sh   # scale west 2→0 + frontend vers east
+```
+
+> **Quand utiliser ces scripts ?** En cas de panne de l'infrastructure d'auto-failover (ex: la Lambda ne répond plus, ou le SNS ne délivre pas le message). Dans le fonctionnement normal, l'auto-failover automatique suffit — les scripts sont une **garantie supplémentaire** pour les opérateurs.
 ---
 
 ## 7. Test du failover et simulation de panne
@@ -370,7 +443,22 @@ aws ecs update-service --cluster streamflex-cluster --service streamflex-user-sv
 3. La Lambda scale les services west à `desired-count=0` (retour en Pilot Light)
 4. Route53 rebascule le DNS vers l'ALB east
 
-### 7.5 Test de la bascule client-side (JS)
+### 7.5 Test manuel (contingence)
+
+Les scripts `failover.sh` / `failback.sh` permettent de tester le runbook de contingence :
+
+```bash
+cd /TP-PROJET/CloudFormation
+echo "mathias" | ./failover.sh   # scale west 0→2 + frontend vers west
+echo "mathias" | ./failback.sh   # scale west 2→0 + frontend vers east
+```
+
+Chaque script effectue dans l'ordre :
+1. **Scaling ECS** — `update-service --desired-count` (2 pour failover, 0 pour failback)
+2. **Attente de stabilité** — polling `runningCount` jusqu'à 120s max
+3. **Publication frontend** — génération et upload du `index.html` vers les buckets S3
+
+### 7.6 Test de la bascule client-side (JS)
 
 Le frontend embarque un mécanisme de détection automatique :
 
@@ -417,7 +505,7 @@ Le frontend embarque un mécanisme de détection automatique :
    aws logs describe-log-groups --region us-east-1
    aws logs tail /ecs/streamflex-catalog-task --region us-east-1
    ```
-4. Si la région active est injoignable, le failover automatique via Route53 + CloudWatch + Lambda prend le relais (~90s)
+4. Si la région active est injoignable, le failover automatique via Route53 + CloudWatch + Lambda prend le relais (~90s). En cas de panne de l'auto-failover, lancer `./failover.sh` (scale west 0→2 + publication frontend)
 
 ### Panne : Le frontend S3 ne s'affiche pas
 

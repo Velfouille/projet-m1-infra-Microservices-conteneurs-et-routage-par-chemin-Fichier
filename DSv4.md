@@ -43,7 +43,12 @@ Environnement **AWS Learner Lab** : seul le rôle `LabRole` est disponible. Pas 
 
 **Problème :** Le cluster west est dans des subnets privés. Même avec `PubliclyAccessible=true`, le subnet n'a pas de route vers l'Internet Gateway → connexions depuis east ECS timeout.
 
-**Solution documentée :** Utiliser une Lambda VPC-enabled dans west comme proxy d'écriture. Non implémenté faute de temps (contournement Learner Lab).
+**Solution :** Implémenter une **Lambda VPC-enabled** dans west comme proxy d'écriture :
+- Lambda `streamflex-user-replication` déployée dans les subnets privés west
+- Utilise une layer pymysql pour la connexion MySQL
+- Invoquée cross-région depuis l'API User east via `@aws-sdk/client-lambda` (InvocationType: Event)
+- RDS west reste en accès privé (plus besoin de `PublicRDS=true`)
+- Lambda layer buildée automatiquement par `deploy.sh` et uploadée vers S3
 
 ### 6. Health check ALM-04 (Route53)
 
@@ -78,7 +83,7 @@ us-east-1 (ACTIVE)                         us-west-2 (SECOURS)
         ▼                                        ▼
   DynamoDB Catalog            (réplication Stream → Lambda → west)
   Aurora MySQL User           (SG: 3306 subnets privés)
-                               └── West: +0.0.0.0/0 (PublicRDS)
+                                └── Lambda VPC-enabled → écriture privée west
 
   Route53 Health Check (/user/health) ←→ CloudWatch Alarm → SNS → Lambda Auto-Failover
 ```
@@ -96,7 +101,7 @@ us-east-1 (ACTIVE)                         us-west-2 (SECOURS)
 | Auto-failover | ✅ Route53 + Lambda + CloudWatch Alarm OK |
 | Pilot Light west | ✅ 0 conteneurs, RDS prêt |
 | Réplication DynamoDB | ✅ Stream + Lambda |
-| Réplication RDS (User) | ⚠️ Code prêt, blocage réseau Learner Lab |
+| Réplication RDS (User) | ✅ Lambda VPC-enabled west, invocation cross-région SDK |
 | Sécurité (SG, doc, IAM) | ✅ Documenté et déployé |
 
 ## Commandes utiles après déploiement
