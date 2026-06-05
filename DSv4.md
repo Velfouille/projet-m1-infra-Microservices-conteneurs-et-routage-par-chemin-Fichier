@@ -80,7 +80,7 @@ us-east-1 (ACTIVE)                         us-west-2 (SECOURS)
   Aurora MySQL User           (SG: 3306 subnets privés)
                                └── West: +0.0.0.0/0 (PublicRDS)
 
-  Route53 Health Check ←→ CloudWatch Alarm → SNS → Lambda Auto-Failover
+  Route53 Health Check (/user/health) ←→ CloudWatch Alarm → SNS → Lambda Auto-Failover
 ```
 
 ---

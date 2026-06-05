@@ -7,29 +7,29 @@
 L'infrastructure StreamFlex est déployée sur **deux régions AWS** (us-east-1 active, us-west-2 secours) selon le modèle **Pilot Light** :
 
 ```
-                          us-east-1 (ACTIVE)                         us-west-2 (SECOURS)
-   ┌──────────────────────────────────────────┐   ┌──────────────────────────────────────────┐
-   │  S3 Frontend (bucket public)              │   │  S3 Frontend (bucket public)              │
-   │       ↑                                    │   │       ↑                                  │
-   │  ┌── ALB ── SG : HTTP(80) 0.0.0.0/0 ──┐  │   │  ┌── ALB ── SG : HTTP(80) 0.0.0.0/0 ──┐  │
-   │  │   ├── /catalog → ECS Fargate × 2    │  │   │  │   ├── /catalog → ECS Fargate × 0    │  │
-   │  │   └── /user    → ECS Fargate × 2    │  │   │  │   └── /user    → ECS Fargate × 0    │  │
-   │  └──── ECS SG : 8080/5000 depuis ALB ──┘  │   │  └──── ECS SG : 8080/5000 depuis ALB ──┘  │
-   │         │              │                   │   │         │              │                  │
-   │         ▼              ▼                   │   │         ▼              ▼                  │
-   │   DynamoDB Catalog   ┌─ RDS ──────────┐   │   │   DynamoDB Catalog   ┌─ RDS ──────────┐   │
-   │   (Stream → Sync ─── │ SG : MySQL(3306) │   │   │   (répliqué depuis  │ SG : MySQL(3306) │   │
-   │    Lambda → west)    │ subnets privés   │   │   │   east)             │ subnets privés   │   │
-   │                      └─────────────────┘   │   │                      │ + Public(0.0.0.0 │   │
-   │                                            │   │                      │ /0) rep. cross  │   │
-   │                                            │   │                      └─────────────────┘   │
-   └──────────────────────────────────────────┘   └──────────────────────────────────────────┘
-                          │   Replication User API (POST/DELETE via PeerDBHost)                  │
-                          │   └── east ECS → NAT → Internet → west RDS (PublicRDS)               │
-                          └────────── Route53 Health Check ←→ CloudWatch Alarm ────────────────┘
-                                                       ↓
-                                               Lambda Auto-Failover
-                                         (scale ECS west: 0→2 en ALARME)
+                           us-east-1 (ACTIVE)                         us-west-2 (PILOT LIGHT)
+    ┌──────────────────────────────────────────┐   ┌──────────────────────────────────────────┐
+    │  S3 Frontend (bucket public)              │   │  S3 Frontend (bucket public)              │
+    │       ↑                                    │   │       ↑                                  │
+    │  ┌── ALB ── SG : HTTP(80) 0.0.0.0/0 ──┐  │   │  ┌── ALB ── SG : HTTP(80) 0.0.0.0/0 ──┐  │
+    │  │   ├── /catalog → ECS Fargate × 2    │  │   │  │   ├── /catalog → ECS Fargate × 0    │  │
+    │  │   └── /user    → ECS Fargate × 2    │  │   │  │   └── /user    → ECS Fargate × 0    │  │
+    │  └──── ECS SG : 8080/5000 depuis ALB ──┘  │   │  └──── ECS SG : 8080/5000 depuis ALB ──┘  │
+    │         │              │                   │   │         │              │                  │
+    │         ▼              ▼                   │   │         ▼              ▼                  │
+    │   DynamoDB Catalog   ┌─ RDS ──────────┐   │   │   DynamoDB Catalog   ┌─ RDS ──────────┐   │
+    │   (Stream → Sync ─── │ Aurora MySQL    │   │   │   (répliqué depuis  │ Aurora MySQL    │   │
+    │    Lambda → west)    │ SG: 3306 subnets│   │   │   east via Stream)  │ SG: 3306 subnets│   │
+    │                      │ privés 10.0.2/24│   │   │                     │ privés + 0.0.0.0│   │
+    │                      └─────────────────┘   │   │                     │ /0 (cross-région)│   │
+    │                                            │   │                     └─────────────────┘   │
+    └──────────────────────────────────────────┘   └──────────────────────────────────────────┘
+                           │   Réplication User API (POST/DELETE via PEER_DB_HOST)               │
+                           │   └── east ECS → NAT → Internet → west RDS (port 3306 public)     │
+                           └────────── Route53 Health Check (/user/health) ───────────────────┘
+                                                        ↓
+                                          CloudWatch Alarm → SNS → Lambda Auto-Failover
+                                               (scale ECS west: 0→2 en ALARM, 2→0 en OK)
 ```
 
 - **us-east-1 (ACTIVE)** : VPC complet, 2 conteneurs Fargate par service, RDS Aurora MySQL, ALB, frontend S3
@@ -42,12 +42,11 @@ L'infrastructure StreamFlex est déployée sur **deux régions AWS** (us-east-1 
 Le déploiement est modulaire, avec **6 templates YAML** :
 
 ```
-streamflex-master.yaml       ← Stack maître (orchestre les sous-stacks)
-├── streamflex-infra.yaml    ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, RDS Aurora)
-├── streamflex-alb.yaml      ← Couche ALB (load balancer, target groups, security groups)
-├── streamflex-ecs.yaml      ← Couche ECS (cluster Fargate, services, frontend S3)
-├── streamflex-route53.yaml  ← Couche DNS (health checks, failover DNS)
-└── streamflex-autofailover.yaml ← Auto-failover (Lambda + SNS + CloudWatch Alarm)
+streamflex-master.yaml          ← Stack maître (orchestre les sous-stacks)
+├── streamflex-infra.yaml       ← Couche réseau (VPC, subnets, IGW, NAT, DynamoDB, RDS Aurora)
+├── streamflex-alb.yaml         ← Couche ALB (load balancer, target groups, security groups)
+├── streamflex-ecs.yaml         ← Couche ECS (cluster Fargate, services, frontend S3)
+└── streamflex-autofailover.yaml ← Auto-failover (Lambda + SNS + CloudWatch Alarm + Route53 Health Check)
 ```
 
 ### Microservices
@@ -57,7 +56,7 @@ streamflex-master.yaml       ← Stack maître (orchestre les sous-stacks)
 | Catalog API | 8080 | `/catalog` | Node.js / Express | DynamoDB `streamflex-catalog-db` |
 | User API | 5000 | `/user` | Node.js / Express | Aurora MySQL (RDS) `streamflex-user-cluster` |
 
-> **Choix des bases de données :** Le catalogue utilise DynamoDB (données produit clé-valeur, adaptées au NoSQL) tandis que les utilisateurs bénéficient d'Aurora MySQL (données relationnelles structurées). Les deux sont déployés dans les deux régions : DynamoDB est synchronisé cross-région via Streams + Lambda ; Aurora MySQL est déployé indépendamment dans chaque région (pas de réplication cross-région — chaque région a son propre cluster pour les users).
+> **Choix des bases de données :** Le catalogue utilise DynamoDB (données produit clé-valeur, adaptées au NoSQL) tandis que les utilisateurs bénéficient d'Aurora MySQL (données relationnelles structurées). Les deux sont déployés dans les deux régions : DynamoDB est synchronisé cross-région via Streams + Lambda ; Aurora MySQL utilise une réplication **application-level** (dual-write) depuis la région active vers la région passive via `PEER_DB_HOST`.
 
 ### Synchronisation multi-région
 
@@ -139,17 +138,28 @@ Le script vous demande vos initiales (ex: `mbn`, `team1`, etc.) puis :
 
 ### Étape 3 : Builder et pusher les images Docker (si modification des APIs)
 
+**Catalog API** (Docker Hub — publique) :
+
 ```bash
 cd streamflex-apis/catalog-api
 docker build -t <dockerhub_username>/streamflex-api:catalog .
 docker push <dockerhub_username>/streamflex-api:catalog
-
-cd ../user-api
-docker build -t <dockerhub_username>/streamflex-api:user .
-docker push <dockerhub_username>/streamflex-api:user
 ```
 
-Puis mettre à jour l'image dans `streamflex-ecs.yaml` (ligne `Image:` sous `CatalogTaskDefinition` et `UserTaskDefinition`) et relancer `deploy.sh`.
+Puis mettre à jour l'image dans `streamflex-ecs.yaml` (ligne `Image:` sous `CatalogTaskDefinition`).
+
+**User API** (Amazon ECR — privée, propre au compte AWS) :
+
+```bash
+cd streamflex-apis/user-api
+aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <account_id>.dkr.ecr.<region>.amazonaws.com
+aws ecr create-repository --repository-name streamflex-user-api --region <region> || true
+docker build -t streamflex-user-api .
+docker tag streamflex-user-api:latest <account_id>.dkr.ecr.<region>.amazonaws.com/streamflex-user-api:latest
+docker push <account_id>.dkr.ecr.<region>.amazonaws.com/streamflex-user-api:latest
+```
+
+L'image User API est référencée dynamiquement dans `streamflex-ecs.yaml` via `!Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/streamflex-user-api:latest"` — aucun changement manuel nécessaire après le push.
 
 ### Étape 4 : Tester
 
@@ -245,22 +255,22 @@ Ce script :
 Le failover est entièrement automatisé via `streamflex-autofailover.yaml` :
 
 ```
-us-east-1 (ACTIVE)  ←→  Route53 Health Check  ←→  CloudWatch Alarm
-  NbConteneurs=2                 ↓  (ALARM/OK)
-                          SNS Topic
-                              ↓
-                      Lambda auto-failover
-                              ↓
-                    us-west-2 (PILOT LIGHT)
-                      NbConteneurs=0 → 2 (failover)
-                      NbConteneurs=2 → 0 (failback)
+us-east-1 (ACTIVE)  ←→  Route53 Health Check (/user/health)  ←→  CloudWatch Alarm
+  NbConteneurs=2                       ↓  (ALARM/OK)
+                                SNS Topic
+                                    ↓
+                          Lambda auto-failover
+                                    ↓
+                      us-west-2 (PILOT LIGHT)
+                        NbConteneurs=0 → 2 (failover)
+                        NbConteneurs=2 → 0 (failback)
 ```
 
 ### Fonctionnement
 
 1. La région primaire (**us-east-1**) tourne en permanence avec **NbConteneurs=2**
 2. La région secondaire (**us-west-2**) est en pilot light avec **NbConteneurs=0** (coût minimal)
-3. Route 53 vérifie la santé de l'ALB primaire via `/health` toutes les 30s
+3. Route 53 vérifie la santé de l'ALB primaire via `/user/health` toutes les 30s
 4. Si l'ALB est injoignable pendant 3 périodes consécutives (~90s), la **CloudWatch Alarm** se déclenche
 5. L'alarme envoie une notification **SNS** → déclenche la **Lambda d'auto-failover**
 6. La Lambda scale les services ECS de west à **NbConteneurs=2**
@@ -300,7 +310,7 @@ aws ecs update-service --cluster streamflex-cluster --service streamflex-user-sv
 ```
 
 **Ce qui se passe :**
-1. Le Route53 Health Check (toutes les 30s) détecte que l'ALB ne répond plus sur `/health`
+1. Le Route53 Health Check (toutes les 30s) détecte que l'ALB ne répond plus sur `/user/health`
 2. Après 3 échecs consécutifs (~90s), la CloudWatch Alarm `streamflex-autofailover-alarm` passe en état **ALARM**
 3. L'alarme notifie le SNS Topic → déclenche la Lambda `streamflex-autofailover`
 4. La Lambda scale les services ECS en **us-west-2** à `desired-count=2`
@@ -346,7 +356,7 @@ ALB_PASSIVE=$(aws cloudformation describe-stacks \
   --output text)
 
 # Tester les endpoints
-curl -s $ALB_PASSIVE/health
+curl -s $ALB_PASSIVE/user/health
 curl -s $ALB_PASSIVE/catalog
 curl -s $ALB_PASSIVE/user
 ```
@@ -608,7 +618,7 @@ Le bucket frontend est volontairement public (pédagogique). En production, on u
 
 ### 9.7 Auto-failover et sécurité
 
-- Le **Route53 Health Check** vérifie l'ALB east toutes les 30s (HTTP GET /health)
+- Le **Route53 Health Check** vérifie l'ALB east toutes les 30s (HTTP GET /user/health)
 - La **Lambda d'auto-failover** ne peut que modifier le `desiredCount` des services ECS (permissions limitées)
 - Le topic **SNS** est interne au projet (pas de souscription externe)
 - En cas d'ALARM, la Lambda scale west de 0 à 2 conteneurs ; en cas d'OK, elle scale west de 2 à 0

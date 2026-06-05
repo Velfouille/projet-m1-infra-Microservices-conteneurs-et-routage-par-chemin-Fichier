@@ -46,23 +46,27 @@ Le CDK génère des rôles IAM implicites qui entrent en conflit avec les Permis
 
 ## 4. Couche données — DynamoDB (Catalog) + Aurora MySQL (User)
 
-**Stack :** DynamoDB (mode Pay-Per-Request) pour le catalogue, Aurora MySQL provisionné (db.t3.small) pour les utilisateurs, déployés par région.
+**Stack :** DynamoDB (mode Pay-Per-Request) pour le catalogue, Aurora MySQL provisionné (db.t3.medium) pour les utilisateurs, déployés par région.
 
 **Pourquoi ce choix hybride ?** Le catalogue stocke des données produit au format clé-valeur (titre, catégorie, description) — parfait pour DynamoDB (NoSQL, sans schéma fixe). Les utilisateurs ont des données relationnelles structurées (userId, username, plan) qui bénéficient des contraintes et requêtes SQL d'Aurora MySQL.
 
-**Synchronisation cross-région :** Seul le catalogue est répliqué via DynamoDB Streams + Lambda vers us-west-2. Les données utilisateurs sont indépendantes par région (chaque région a son propre cluster Aurora). En situation de failover, la région de secours possède sa propre base utilisateur.
+**Synchronisation cross-région :** Le catalogue est répliqué via DynamoDB Streams + Lambda vers us-west-2. Les données utilisateurs utilisent une réplication **application-level** (dual-write) : chaque `POST /user` et `DELETE /user/:id` en us-east-1 est répliqué asynchrone vers le cluster Aurora west via le paramètre `PEER_DB_HOST`. En situation de failover, la région de secours possède les données répliquées.
 
 **Pourquoi pas DynamoDB pour les deux ?** Uniformiser sur DynamoDB aurait simplifié la réplication mais aurait privé le User API des bénéfices du relationnel (jointures, contraintes d'intégrité, transactions ACID).
 
 ---
 
-## 5. Registre d'images — Docker Hub (public)
+## 5. Registre d'images — Docker Hub (Catalog) + ECR (User)
 
-**Stack :** Images Docker hébergées sur Docker Hub (`velfouille/streamflex-api:catalog` et `:user`)
+**Stack :** 
+- **Catalog API** : Docker Hub public (`velfouille/streamflex-api:catalog`)
+- **User API** : Amazon ECR privé (`${AccountId}.dkr.ecr.${Region}.amazonaws.com/streamflex-user-api:latest`)
 
-**Pourquoi pas ECR privé avec réplication cross-region ?** La réplication inter-régions d'ECR nécessite des permissions IAM souvent bloquées en environnement Learner Lab.
+**Pourquoi ce choix hybride ?** 
+- Le Catalog API utilise une image publique pour permettre un pull sans authentification depuis n'importe quel compte AWS.
+- Le User API utilise ECR pour bénéficier du chiffrement et du contrôle d'accès natif AWS — l'image est pullée via le `LabRole` qui a accès à ECR par défaut.
 
-**Choix retenu :** Un registre public garantit que la région de secours peut puller les images sans erreur "Access Denied".
+**Pourquoi pas ECR privé avec réplication cross-region pour les deux ?** La réplication inter-régions d'ECR nécessite des permissions IAM souvent bloquées en environnement Learner Lab. L'image User est pushée manuellement dans chaque région si nécessaire.
 
 ---
 
@@ -101,4 +105,33 @@ Le CDK génère des rôles IAM implicites qui entrent en conflit avec les Permis
 
 ## 9. Schéma d'architecture
 
-Voir `Schéma Infra Streamflex V2.drawio` et `Schéma Infra Streamflex V2.png`.
+```
+us-east-1 (ACTIVE)                         us-west-2 (PILOT LIGHT)
+  ┌─────────────────────┐                   ┌─────────────────────┐
+  │ S3 Frontend (public)│                   │ S3 Frontend (public)│
+  └─────────┬───────────┘                   └─────────┬───────────┘
+            │ HTTP 80                                 │ HTTP 80
+  ┌─────────▼───────────┐                   ┌─────────▼───────────┐
+  │ ALB (internet-facing)│                   │ ALB (internet-facing)│
+  │  /catalog → ECS:8080 │                   │  /catalog → ECS:8080 │
+  │  /user    → ECS:5000 │                   │  /user    → ECS:5000 │
+  └─────────┬───────────┘                   └─────────┬───────────┘
+            │ SG: 8080/5000 depuis ALB SG              │ (Pilot Light)
+  ┌─────────▼───────────┐                   ┌─────────▼───────────┐
+  │ ECS Fargate ×2/svc  │                   │ ECS Fargate ×0/svc  │
+  │ (subnets privés)    │                   │ (subnets privés)    │
+  └──┬──────────────┬───┘                   └──┬──────────────┬───┘
+     │              │                          │              │
+     ▼              ▼                          ▼              ▼
+┌─────────┐  ┌──────────┐              ┌─────────┐  ┌──────────┐
+│DynamoDB │  │Aurora    │              │DynamoDB │  │Aurora    │
+│Catalog  │  │MySQL User│              │Catalog  │  │MySQL User│
+│(Stream→ │  │(SG: 3306 │              │(répliqué│  │(SG: 3306 │
+│ Lambda) │  │privés)   │              │depuis   │  │privés +  │
+└─────────┘  └──────────┘              │east)    │  │0.0.0.0/0)│
+                                        └─────────┘  └──────────┘
+
+Route53 HC (/user/health) ←→ CloudWatch Alarm → SNS → Lambda Auto-Failover
+```
+
+Voir aussi `Schéma Infra Streamflex V2.drawio` et `Schéma Infra Streamflex V2.png`.
